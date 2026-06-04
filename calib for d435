@@ -1,0 +1,618 @@
+import cv2
+import numpy as np
+import pyrealsense2 as rs
+from collections import deque
+import json
+import os
+import time
+
+# ============================================================
+# SETTINGS
+# ============================================================
+
+MARKER_SIZE = 0.037  # m
+HALF = MARKER_SIZE / 2
+
+# (0,0,0) op de top-left BUITENHOEK van marker 1.
+#
+#         (0,0) -----> +Y  (richting M3 / M2)
+#           |
+#           v +X (richting M5 / M2)
+#
+#           +-[M1]------------------[M3]-+
+#           |                            |
+#           |        workspace           |
+#           |                            |
+#           +-[M5]------------------[M2]-+
+#
+DX_15 = 0.173   # M1 -> M5  (langs +X)
+DY_13 = 0.263   # M1 -> M3  (langs +Y)
+
+WORLD_MARKERS = {
+    1: np.array([HALF,         HALF,         0.0]),
+    5: np.array([DX_15 + HALF, HALF,         0.0]),
+    0: np.array([HALF,         DY_13 + HALF, 0.0]),
+    2: np.array([DX_15 + HALF, DY_13 + HALF, 0.0]),
+}
+EXPECTED_IDS = set(WORLD_MARKERS.keys())
+
+WORKSPACE_W = DX_15 + MARKER_SIZE     # 0.210 m
+WORKSPACE_H = DY_13 + MARKER_SIZE     # 0.300 m
+
+# Tunable thresholds
+DEPTH_PATCH_SIZE     = 7        # 7x7 patch (less edge bleed than 11x11)
+MAX_FIT_ERR_M        = 0.010    # 10 mm Kabsch residual to call calibratie "ok"
+MAX_REPROJ_ERR_PX    = 2.0      # cosmetic: kleurt waarschuwing
+MAX_SIZE_RATIO_DEV   = 0.05     # 5% IPPE/depth ratio voor MARKER_SIZE warning
+AVG_WINDOW           = 30
+CALIB_FILE           = "world_calib.json"
+
+# Bron voor Kabsch:
+#   'ippe'  -> IPPE tvec per marker (subpixel, depth-onafhankelijk)  <-- aanbevolen
+#   'depth' -> deprojected depth median
+#   'auto'  -> ippe als beschikbaar, anders depth
+KABSCH_SOURCE = 'ippe'
+
+# ============================================================
+# REALSENSE + DEPTH FILTERS
+# ============================================================
+
+pipeline = rs.pipeline()
+config = rs.config()
+config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+profile = pipeline.start(config)
+align = rs.align(rs.stream.color)
+
+depth_sensor = profile.get_device().first_depth_sensor()
+depth_scale = depth_sensor.get_depth_scale()
+
+spatial = rs.spatial_filter()
+spatial.set_option(rs.option.filter_magnitude, 2)
+spatial.set_option(rs.option.filter_smooth_alpha, 0.5)
+spatial.set_option(rs.option.filter_smooth_delta, 20)
+
+temporal = rs.temporal_filter()
+temporal.set_option(rs.option.filter_smooth_alpha, 0.4)
+temporal.set_option(rs.option.filter_smooth_delta, 20)
+
+hole_filling = rs.hole_filling_filter(1)
+
+intr = (
+    profile.get_stream(rs.stream.color)
+    .as_video_stream_profile()
+    .get_intrinsics()
+)
+
+camera_matrix = np.array([
+    [intr.fx, 0,       intr.ppx],
+    [0,       intr.fy, intr.ppy],
+    [0,       0,       1]
+], dtype=np.float64)
+dist_coeffs = np.array(intr.coeffs, dtype=np.float64)
+
+# ============================================================
+# ARUCO
+# ============================================================
+
+aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_50)
+aruco_params = cv2.aruco.DetectorParameters()
+aruco_params.cornerRefinementMethod        = cv2.aruco.CORNER_REFINE_SUBPIX
+aruco_params.cornerRefinementWinSize       = 5
+aruco_params.cornerRefinementMaxIterations = 50
+aruco_params.cornerRefinementMinAccuracy   = 0.01
+detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+
+marker_corners_local = np.array([
+    [-HALF,  HALF, 0],
+    [ HALF,  HALF, 0],
+    [ HALF, -HALF, 0],
+    [-HALF, -HALF, 0],
+], dtype=np.float64)
+
+# ============================================================
+# GLOBALS
+# ============================================================
+
+T_world_cam        = None
+T_world_cam_locked = None
+calibration_locked = False
+latest_depth_image = None
+clicked_points     = []   # list of ((u,v), world_xyz)
+marker_history     = {mid: deque(maxlen=AVG_WINDOW) for mid in WORLD_MARKERS}
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def get_depth_median(depth_image, u, v, size=DEPTH_PATCH_SIZE):
+    """Robuuste depth (m) uit een NxN patch rond (u,v)."""
+    if depth_image is None:
+        return 0.0
+    h, w = depth_image.shape
+    hp = size // 2
+    y1, y2 = max(0, int(v) - hp), min(h, int(v) + hp + 1)
+    x1, x2 = max(0, int(u) - hp), min(w, int(u) + hp + 1)
+    patch = depth_image[y1:y2, x1:x2]
+    valid = patch[patch > 0]
+    if len(valid) < 5:
+        return 0.0
+    return float(np.median(valid)) * depth_scale
+
+
+def kabsch(P, Q):
+    """Optimal rigid transform R,t zodat R @ P + t ≈ Q (least-squares).
+    Returns R, t, mean_residual, per_point_residuals."""
+    cP = P.mean(axis=0)
+    cQ = Q.mean(axis=0)
+    Pc = P - cP
+    Qc = Q - cQ
+    H = Pc.T @ Qc
+    U, S, Vt = np.linalg.svd(H)
+    d = np.sign(np.linalg.det(Vt.T @ U.T))
+    R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
+    t = cQ - R @ cP
+    pred = (R @ P.T).T + t
+    per_pt = np.linalg.norm(pred - Q, axis=1)
+    return R, t, float(per_pt.mean()), per_pt
+
+
+def get_active_T():
+    """Locked transform heeft voorrang boven live transform."""
+    return T_world_cam_locked if calibration_locked else T_world_cam
+
+
+def pixel_to_world(u, v, depth_image):
+    T = get_active_T()
+    if T is None:
+        return None
+    depth = get_depth_median(depth_image, u, v)
+    if depth <= 0:
+        return None
+    pt_cam = rs.rs2_deproject_pixel_to_point(intr, [float(u), float(v)], depth)
+    pt_h = np.array([pt_cam[0], pt_cam[1], pt_cam[2], 1.0])
+    return (T @ pt_h)[:3]
+
+
+def in_workspace(world_xyz):
+    x, y = world_xyz[0], world_xyz[1]
+    return (0.0 <= x <= WORKSPACE_W) and (0.0 <= y <= WORKSPACE_H)
+
+
+def save_calibration(T_wc, residual_m):
+    data = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "T_world_cam": T_wc.tolist(),
+        "marker_size_m": MARKER_SIZE,
+        "world_markers": {str(k): v.tolist() for k, v in WORLD_MARKERS.items()},
+        "kabsch_residual_mm": (residual_m * 1000.0) if residual_m is not None else None,
+        "intrinsics": {
+            "fx": intr.fx, "fy": intr.fy,
+            "ppx": intr.ppx, "ppy": intr.ppy,
+            "width": intr.width, "height": intr.height,
+        },
+    }
+    with open(CALIB_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"Calibration saved -> {CALIB_FILE}")
+
+
+def load_calibration():
+    if not os.path.exists(CALIB_FILE):
+        print(f"Geen calibratie bestand gevonden: {CALIB_FILE}")
+        return None
+    with open(CALIB_FILE, "r") as f:
+        data = json.load(f)
+    T = np.array(data["T_world_cam"], dtype=np.float64)
+    saved_intr = data.get("intrinsics", {})
+    if abs(saved_intr.get("fx", intr.fx) - intr.fx) > 1.0:
+        print("WARN: andere camera intrinsics in calibratiebestand "
+              "(misschien andere camera/resolutie).")
+    print(f"Calibration loaded  (residual={data.get('kabsch_residual_mm','?')} mm)")
+    return T
+
+
+# ============================================================
+# MOUSE
+# ============================================================
+
+def mouse_callback(event, x, y, flags, param):
+    global clicked_points
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if latest_depth_image is None or get_active_T() is None:
+            print("Geen geldige calibratie.")
+            return
+        world = pixel_to_world(x, y, latest_depth_image)
+        if world is None:
+            print(f"Geen depth op ({x},{y}).")
+            return
+        d = get_depth_median(latest_depth_image, x, y)
+        ws_flag = "" if in_workspace(world) else "  [BUITEN workspace]"
+        print(
+            f"Pixel ({x},{y}) depth={d*100:5.1f} cm  ->  "
+            f"X={world[0]*100:6.1f}  Y={world[1]*100:6.1f}  "
+            f"Z={world[2]*100:6.1f}  cm{ws_flag}"
+        )
+        clicked_points.append(((x, y), world))
+        if len(clicked_points) > 10:
+            clicked_points.pop(0)
+    elif event == cv2.EVENT_RBUTTONDOWN:
+        clicked_points = []
+        print("Punten gewist.")
+
+
+cv2.namedWindow("World Calibration")
+cv2.setMouseCallback("World Calibration", mouse_callback)
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+
+print("L=test  R=wis  SPACE=lock/unlock  S=save  D=load  C=clear hist  ESC=stop")
+
+try:
+    while True:
+        frames = pipeline.wait_for_frames()
+        aligned = align.process(frames)
+        color_frame = aligned.get_color_frame()
+        depth_frame = aligned.get_depth_frame()
+        if not color_frame or not depth_frame:
+            continue
+
+        # Depth filter chain
+        df = spatial.process(depth_frame)
+        df = temporal.process(df)
+        df = hole_filling.process(df)
+        depth_frame_f = df.as_depth_frame()
+
+        latest_depth_image = np.asanyarray(depth_frame_f.get_data())
+        img = np.asanyarray(color_frame.get_data())
+
+        corners, ids, _ = detector.detectMarkers(img)
+
+        # Per-frame state
+        diag_lines     = []
+        size_lines     = []
+        warning_lines  = []
+        reproj_lines   = []
+        fit_ok         = False
+        z_ok           = False
+        residual_m     = None
+        per_marker_err = None
+        cam_pos_world  = None
+        T_cam_world_show = None
+        ids_for_kabsch = []
+
+        centers_depth = {}
+        centers_ippe  = {}
+        pixel_centers = {}
+
+        if ids is not None:
+            cv2.aruco.drawDetectedMarkers(img, corners, ids)
+            seen_ids = {int(i) for i in ids.flatten()}
+
+            unexpected = seen_ids - EXPECTED_IDS
+            missing    = EXPECTED_IDS - seen_ids
+            if unexpected:
+                warning_lines.append(f"Onverwachte ID(s): {sorted(unexpected)}")
+            if missing:
+                warning_lines.append(f"Mist verwachte ID(s): {sorted(missing)}")
+
+            for mid_arr, m_corner in zip(ids.flatten(), corners):
+                mid = int(mid_arr)
+                if mid not in WORLD_MARKERS:
+                    continue
+
+                img_pts = m_corner.reshape(4, 2).astype(np.float64)
+                cx_f, cy_f = img_pts.mean(axis=0)
+                pixel_centers[mid] = (cx_f, cy_f)
+
+                # Depth-based 3D center
+                depth = get_depth_median(latest_depth_image, cx_f, cy_f)
+                if depth > 0:
+                    pt_cam = rs.rs2_deproject_pixel_to_point(
+                        intr, [cx_f, cy_f], depth
+                    )
+                    centers_depth[mid] = np.array(pt_cam, dtype=np.float64)
+
+                # IPPE pose (subpixel-accurate, 4 corners)
+                ok, rvec, tvec = cv2.solvePnP(
+                    marker_corners_local, img_pts,
+                    camera_matrix, dist_coeffs,
+                    flags=cv2.SOLVEPNP_IPPE_SQUARE
+                )
+                if ok:
+                    centers_ippe[mid] = tvec.flatten()
+
+            # MARKER_SIZE diagnostic
+            for mid in sorted(centers_depth.keys() & centers_ippe.keys()):
+                d_dep = float(np.linalg.norm(centers_depth[mid]))
+                d_ipp = float(np.linalg.norm(centers_ippe[mid]))
+                if d_dep > 0.05 and d_ipp > 0.05:
+                    ratio = d_ipp / d_dep
+                    if abs(ratio - 1.0) > MAX_SIZE_RATIO_DEV:
+                        suggested = MARKER_SIZE * d_dep / d_ipp
+                        size_lines.append(
+                            f"M{mid}: IPPE/depth={ratio:.2f}  "
+                            f"MARKER_SIZE ~ {suggested*1000:.1f} mm"
+                        )
+
+            # Per-marker label
+            for mid in pixel_centers:
+                cx, cy = pixel_centers[mid]
+                parts = []
+                if mid in centers_depth:
+                    parts.append(f"dpt {np.linalg.norm(centers_depth[mid])*100:.0f}")
+                if mid in centers_ippe:
+                    parts.append(f"ipp {np.linalg.norm(centers_ippe[mid])*100:.0f}")
+                txt = " | ".join(parts) + " cm" if parts else ""
+                if txt:
+                    cv2.putText(img, txt, (int(cx) - 55, int(cy) + 28),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                                (0, 255, 255), 1, cv2.LINE_AA)
+                ex = WORLD_MARKERS[mid][0] * 100
+                ey = WORLD_MARKERS[mid][1] * 100
+                cv2.putText(img, f"verw ({ex:.1f},{ey:.1f}) cm",
+                            (int(cx) - 55, int(cy) + 44),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38,
+                            (100, 165, 255), 1, cv2.LINE_AA)
+
+            # Kies bron en update history
+            if KABSCH_SOURCE == 'ippe':
+                source = centers_ippe
+            elif KABSCH_SOURCE == 'depth':
+                source = centers_depth
+            else:  # 'auto'  -> ippe wint, depth vult aan
+                source = {**centers_depth, **centers_ippe}
+
+            for mid, p in source.items():
+                marker_history[mid].append(p)
+
+            # Paarsgewijze afstanden (uit ippe als die er is, anders depth)
+            dist_src = centers_ippe if centers_ippe else centers_depth
+            ids_known = sorted(m for m in dist_src if m in WORLD_MARKERS)
+            for i in range(len(ids_known)):
+                for j in range(i + 1, len(ids_known)):
+                    a, b = ids_known[i], ids_known[j]
+                    meas = np.linalg.norm(dist_src[a] - dist_src[b])
+                    exp_ = np.linalg.norm(WORLD_MARKERS[a] - WORLD_MARKERS[b])
+                    diff_cm = (meas - exp_) * 100
+                    diag_lines.append(
+                        f"d({a}-{b}): meet {meas*100:5.1f}  "
+                        f"verw {exp_*100:5.1f}  ({diff_cm:+.1f}) cm"
+                    )
+
+        # =============== KABSCH op temporeel mediaan ===============
+        ids_for_kabsch = sorted(
+            m for m in marker_history
+            if len(marker_history[m]) >= 3 and m in WORLD_MARKERS
+        )
+
+        if len(ids_for_kabsch) >= 3:
+            P = np.array([WORLD_MARKERS[m] for m in ids_for_kabsch], dtype=np.float64)
+            Q = np.array([
+                np.median(np.stack(marker_history[m]), axis=0)
+                for m in ids_for_kabsch
+            ], dtype=np.float64)
+
+            R, t, residual_m, per_marker_err = kabsch(P, Q)
+
+            T_cam_world_new = np.eye(4)
+            T_cam_world_new[:3, :3] = R
+            T_cam_world_new[:3, 3]  = t
+            T_world_cam_new = np.linalg.inv(T_cam_world_new)
+            cam_pos_world = T_world_cam_new[:3, 3]
+
+            fit_ok = residual_m < MAX_FIT_ERR_M
+            z_ok   = cam_pos_world[2] > 0
+
+            if fit_ok and z_ok:
+                T_cam_world_show = T_cam_world_new
+                if not calibration_locked:
+                    T_world_cam = T_world_cam_new
+
+        # =============== Reprojection error per marker ===============
+        T_active = get_active_T()
+        if T_active is not None and pixel_centers:
+            T_cw_active = np.linalg.inv(T_active)
+            R_cw_act = T_cw_active[:3, :3]
+            t_cw_act = T_cw_active[:3, 3]
+            rvec_act, _ = cv2.Rodrigues(R_cw_act)
+            for mid in sorted(pixel_centers):
+                exp_w = WORLD_MARKERS[mid].reshape(1, 3).astype(np.float64)
+                proj, _ = cv2.projectPoints(exp_w, rvec_act, t_cw_act,
+                                            camera_matrix, dist_coeffs)
+                px, py = proj[0, 0]
+                dx = pixel_centers[mid][0] - px
+                dy = pixel_centers[mid][1] - py
+                err = float(np.hypot(dx, dy))
+                color = (200, 200, 255) if err < MAX_REPROJ_ERR_PX else (0, 140, 255)
+                reproj_lines.append((f"reproj M{mid}: {err:5.2f} px", color))
+                # Visualize: blue dot = expected, line to detected
+                cv2.circle(img, (int(px), int(py)), 3, (255, 0, 0), -1)
+                cv2.line(img,
+                         (int(px), int(py)),
+                         (int(pixel_centers[mid][0]), int(pixel_centers[mid][1])),
+                         (255, 0, 0), 1, cv2.LINE_AA)
+
+        # =============== Visualisatie wereldframe ===============
+        T_cam_world_for_viz = None
+        if calibration_locked and T_world_cam_locked is not None:
+            T_cam_world_for_viz = np.linalg.inv(T_world_cam_locked)
+        elif T_cam_world_show is not None:
+            T_cam_world_for_viz = T_cam_world_show
+
+        if T_cam_world_for_viz is not None:
+            R_cw = T_cam_world_for_viz[:3, :3]
+            t_cw = T_cam_world_for_viz[:3, 3]
+            rvec_w, _ = cv2.Rodrigues(R_cw)
+
+            cv2.drawFrameAxes(img, camera_matrix, dist_coeffs,
+                              rvec_w, t_cw.reshape(3, 1), 0.05)
+
+            # X/Y/Z labels at axis tips
+            ax_pts = np.array([
+                [0.06, 0,    0],     # X tip
+                [0,    0.06, 0],     # Y tip
+                [0,    0,    0.06],  # Z tip
+            ], dtype=np.float64)
+            ax_img, _ = cv2.projectPoints(ax_pts, rvec_w, t_cw,
+                                          camera_matrix, dist_coeffs)
+            for txt, color, pt in zip(("X", "Y", "Z"),
+                                      ((0, 0, 255), (0, 255, 0), (255, 0, 0)),
+                                      ax_img.reshape(-1, 2)):
+                cv2.putText(img, txt, (int(pt[0]) + 4, int(pt[1]) - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
+
+            # Workspace rectangle
+            ws_world = np.array([
+                [0.0,         0.0,         0.0],
+                [WORKSPACE_W, 0.0,         0.0],
+                [WORKSPACE_W, WORKSPACE_H, 0.0],
+                [0.0,         WORKSPACE_H, 0.0],
+            ], dtype=np.float64)
+            ws_img, _ = cv2.projectPoints(ws_world, rvec_w, t_cw,
+                                          camera_matrix, dist_coeffs)
+            ws_pts = ws_img.reshape(-1, 2).astype(np.int32)
+            cv2.polylines(img, [ws_pts], isClosed=True,
+                          color=(255, 0, 255), thickness=1, lineType=cv2.LINE_AA)
+
+            # Origin marker
+            origin_img, _ = cv2.projectPoints(
+                np.array([[0.0, 0.0, 0.0]]),
+                rvec_w, t_cw, camera_matrix, dist_coeffs
+            )
+            ox, oy = origin_img[0, 0].astype(int)
+            cv2.drawMarker(img, (ox, oy), (255, 0, 255),
+                           cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
+            cv2.putText(img, "(0,0,0)", (ox + 10, oy - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (255, 0, 255), 2, cv2.LINE_AA)
+
+        # =============== Geklikte testpunten ===============
+        for (px, py), world in clicked_points:
+            in_ws = in_workspace(world)
+            dot_col = (0, 0, 255) if in_ws else (0, 140, 255)
+            cv2.circle(img, (px, py), 6, dot_col, -1)
+            cv2.circle(img, (px, py), 7, (255, 255, 255), 1)
+            label = (f"X={world[0]*100:.1f} "
+                     f"Y={world[1]*100:.1f} "
+                     f"Z={world[2]*100:.1f}")
+            if not in_ws:
+                label += " !"
+            cv2.putText(img, label, (px + 10, py - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, dot_col, 1, cv2.LINE_AA)
+
+        # Distance between last 2 clicked points
+        if len(clicked_points) >= 2:
+            (p1, w1), (p2, w2) = clicked_points[-2], clicked_points[-1]
+            cv2.line(img, p1, p2, (0, 255, 255), 1, cv2.LINE_AA)
+            d_cm = float(np.linalg.norm(w2 - w1)) * 100
+            mx, my = (p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2
+            cv2.putText(img, f"{d_cm:.1f} cm", (mx + 8, my),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                        (0, 255, 255), 2, cv2.LINE_AA)
+
+        # =============== Status overlay ===============
+        y0 = 22
+        if cam_pos_world is not None:
+            col = (0, 255, 0) if (fit_ok and z_ok) else (0, 0, 255)
+            cv2.putText(img,
+                        f"Cam: X={cam_pos_world[0]*100:5.1f} "
+                        f"Y={cam_pos_world[1]*100:5.1f} "
+                        f"Z={cam_pos_world[2]*100:5.1f} cm",
+                        (10, y0), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, col, 2, cv2.LINE_AA)
+            y0 += 22
+
+            n_min = min((len(marker_history[m]) for m in ids_for_kabsch), default=0)
+            lock_label = "[LOCKED]" if calibration_locked else "[live]"
+            cv2.putText(img,
+                        f"Kabsch: {residual_m*1000:5.2f} mm  "
+                        f"n={n_min}/{AVG_WINDOW}  "
+                        f"src={KABSCH_SOURCE}  {lock_label}",
+                        (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (255, 0, 255) if calibration_locked else col,
+                        1, cv2.LINE_AA)
+            y0 += 18
+
+            if per_marker_err is not None and len(per_marker_err):
+                worst = float(per_marker_err.max())
+                cv2.putText(img,
+                            f"worst per-marker fit: {worst*1000:.2f} mm",
+                            (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                            (255, 255, 0), 1, cv2.LINE_AA)
+                y0 += 14
+
+        for line in diag_lines:
+            cv2.putText(img, line, (10, y0),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                        (255, 255, 0), 1, cv2.LINE_AA)
+            y0 += 14
+
+        if reproj_lines:
+            y0 += 4
+            for line, color in reproj_lines:
+                cv2.putText(img, line, (10, y0),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                            color, 1, cv2.LINE_AA)
+                y0 += 14
+
+        if size_lines:
+            y0 += 4
+            for line in size_lines:
+                cv2.putText(img, line, (10, y0),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                            (0, 165, 255), 1, cv2.LINE_AA)
+                y0 += 14
+
+        if warning_lines:
+            y0 += 4
+            for line in warning_lines:
+                cv2.putText(img, line, (10, y0),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                            (0, 0, 255), 1, cv2.LINE_AA)
+                y0 += 14
+
+        cv2.putText(img,
+                    "L=test  R=wis  SPACE=lock  S=save  D=load  C=clear hist  ESC=stop",
+                    (10, 470),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (200, 200, 200), 1, cv2.LINE_AA)
+
+        cv2.imshow("World Calibration", img)
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == 27:  # ESC
+            break
+        elif key == 32:  # SPACE
+            if calibration_locked:
+                calibration_locked = False
+                T_world_cam_locked = None
+                print("Calibration UNLOCKED")
+            elif T_world_cam is not None and fit_ok and z_ok:
+                T_world_cam_locked = T_world_cam.copy()
+                calibration_locked = True
+                print(f"Calibration LOCKED (residual={residual_m*1000:.2f} mm)")
+            else:
+                print("Kan niet locken: calibratie nog niet stabiel.")
+        elif key in (ord('c'), ord('C')):
+            for mid in marker_history:
+                marker_history[mid].clear()
+            print("History cleared.")
+        elif key in (ord('s'), ord('S')):
+            T_save = T_world_cam_locked if calibration_locked else T_world_cam
+            if T_save is not None and (calibration_locked or fit_ok):
+                save_calibration(T_save, residual_m)
+            else:
+                print("Geen stabiele calibratie om op te slaan.")
+        elif key in (ord('d'), ord('D')):
+            T_loaded = load_calibration()
+            if T_loaded is not None:
+                T_world_cam_locked = T_loaded
+                calibration_locked = True
+                print("Calibratie geladen en gelockt.")
+
+finally:
+    pipeline.stop()
+    cv2.destroyAllWindows()
