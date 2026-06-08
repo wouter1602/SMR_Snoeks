@@ -1,0 +1,390 @@
+{
+  "status": "started",
+  "startedAt": "2026-06-02T15:23:51",
+  "batch": {
+    "id": "0F1F4DE2",
+    "name": "P000036155 - P000036155 - Inst. Set Caddy 5 Flex L1",
+    "created": "02-06-2026",
+    "batchSize": 5,
+    "partCount": 22,
+    "totalQty": 8000
+  },
+  "deliveries": [
+    {
+      "buffer": "A1",
+      "hopper": "S-1",
+      "handlingMethod": "hopper",
+      "partId": 13,
+      "name": "B-Rivet 7,8x20,5/16x2,5 BGR-DO-AL-WTH",
+      "article": "832165",
+      "deliverQuantity": 200,
+      "weightGrams": 9
+    },
+    {
+      "buffer": "A2",
+      "hopper": "M-1",
+      "handlingMethod": "hopper",
+      "partId": 1,
+      "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+      "article": "830088",
+      "deliverQuantity": 1000,
+      "weightGrams": 5
+    },
+    {
+      "buffer": "A2",
+      "hopper": "S-2",
+      "handlingMethod": "hopper",
+      "partId": 21,
+      "name": "Plug 8x18/1,5-8 CDP-PM-BLK(SNOEKS/Assy)",
+      "article": "P100000192",
+      "deliverQuantity": 300,
+      "weightGrams": 1
+    },
+    {
+      "buffer": "A3",
+      "hopper": "W-1",
+      "handlingMethod": "hopper",
+      "partId": 8,
+      "name": "Cover 8x6/22 WCH-NY-9004 (C-Washer)",
+      "article": "831008",
+      "deliverQuantity": 200,
+      "weightGrams": 0
+    },
+    {
+      "buffer": "A3",
+      "hopper": null,
+      "handlingMethod": "robotarm",
+      "partId": 9,
+      "name": "Cover 8x6/22 CAP-NY-9004 (C-Cap)",
+      "article": "831009",
+      "deliverQuantity": 200,
+      "weightGrams": 0
+    },
+    {
+      "buffer": "A4",
+      "hopper": "S-3",
+      "handlingMethod": "hopper",
+      "partId": 10,
+      "name": "Plug 8x35/2-27(19x1,5) CSP-NY-GRL",
+      "article": "831490",
+      "deliverQuantity": 200,
+      "weightGrams": 2
+    },
+    {
+      "buffer": "A4",
+      "hopper": "S-4",
+      "handlingMethod": "hopper",
+      "partId": 11,
+      "name": "Plug 4x32,5(24x4) CSI-NY-BLK",
+      "article": "831981",
+      "deliverQuantity": 200,
+      "weightGrams": 0
+    },
+    {
+      "buffer": "B1",
+      "hopper": "L-1",
+      "handlingMethod": "hopper",
+      "partId": 12,
+      "name": "Bolt M8x25 HEX-HXN-10-ZFS",
+      "article": "832110",
+      "deliverQuantity": 1000,
+      "weightGrams": 13
+    },
+    {
+      "buffer": "B1",
+      "hopper": "W-2",
+      "handlingMethod": "hopper",
+      "partId": 14,
+      "name": "Washer 8,4x1,5/20 FLT-A2-WTH",
+      "article": "P000036407",
+      "deliverQuantity": 800,
+      "weightGrams": 3
+    },
+    {
+      "buffer": "B1",
+      "hopper": "S-5",
+      "handlingMethod": "hopper",
+      "partId": 15,
+      "name": "Lashing eye Caddy 5 Flex",
+      "article": "P000038354",
+      "deliverQuantity": 100,
+      "weightGrams": 58
+    },
+    {
+      "buffer": "B2",
+      "hopper": "L-2",
+      "handlingMethod": "hopper",
+      "partId": 2,
+      "name": "Bolt M10x40 HEX-HXN-88-ZPS",
+      "article": "830132",
+      "deliverQuantity": 200,
+      "weightGrams": 32
+    },
+    {
+      "buffer": "B2",
+      "hopper": null,
+      "handlingMethod": "robotarm",
+      "partId": 17,
+      "name": "Bolt UNF7/16\"x1\" HEX-HXW-10-ZPB",
+      "article": "P000038404",
+      "deliverQuantity": 200,
+      "weightGrams": 31
+    },
+    {
+      "buffer": "B3",
+      "hopper": "W-3",
+      "handlingMethod": "hopper",
+      "partId": 4,
+      "name": "Washer 10,5x4/25 FLT-ST-ZPS",
+      "article": "830491",
+      "deliverQuantity": 200,
+      "weightGrams": 11
+    },
+    {
+      "buffer": "B3",
+      "hopper": "W-4",
+      "handlingMethod": "hopper",
+      "partId": 7,
+      "name": "Washer 7x2/25 FLT-ST-PWD",
+      "article": "830754",
+      "deliverQuantity": 400,
+      "weightGrams": 7
+    },
+    {
+      "buffer": "B4",
+      "hopper": "W-5",
+      "handlingMethod": "hopper",
+      "partId": 5,
+      "name": "Washer 13x4/30 FLT-ST-ZPS",
+      "article": "830495",
+      "deliverQuantity": 200,
+      "weightGrams": 17
+    },
+    {
+      "buffer": "B4",
+      "hopper": "W-6",
+      "handlingMethod": "hopper",
+      "partId": 6,
+      "name": "Washer 9x3/28 FLT-ST-ZPS",
+      "article": "830749",
+      "deliverQuantity": 400,
+      "weightGrams": 10
+    },
+    {
+      "buffer": "B4",
+      "hopper": "M-2",
+      "handlingMethod": "hopper",
+      "partId": 18,
+      "name": "Bolt M8x20 OTH-OTH-48-BLC (BallJoint)",
+      "article": "P000038406",
+      "deliverQuantity": 100,
+      "weightGrams": 15
+    },
+    {
+      "buffer": "B4",
+      "hopper": "W-7",
+      "handlingMethod": "hopper",
+      "partId": 19,
+      "name": "Plug 50x61/M8x28/1-15 DVB-RB-BLK",
+      "article": "P000042390",
+      "deliverQuantity": 200,
+      "weightGrams": 22
+    },
+    {
+      "buffer": "C1",
+      "hopper": "L-3",
+      "handlingMethod": "hopper",
+      "partId": 16,
+      "name": "Bolt M10x30 HEX-HXW-10-ZPS",
+      "article": "P000038403",
+      "deliverQuantity": 1000,
+      "weightGrams": 34
+    },
+    {
+      "buffer": "C4",
+      "hopper": "L-4",
+      "handlingMethod": "hopper",
+      "partId": 3,
+      "name": "Nut M6/High LNN-S8-ZPS",
+      "article": "830232",
+      "deliverQuantity": 300,
+      "weightGrams": 3
+    },
+    {
+      "buffer": "C4",
+      "hopper": "M-3",
+      "handlingMethod": "hopper",
+      "partId": 20,
+      "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+      "article": "P000042538",
+      "deliverQuantity": 300,
+      "weightGrams": 17
+    },
+    {
+      "buffer": "C4",
+      "hopper": "W-8",
+      "handlingMethod": "hopper",
+      "partId": 22,
+      "name": "Washer 8x3/15 FLT-RB-BLK",
+      "article": "P000038969",
+      "deliverQuantity": 300,
+      "weightGrams": 0
+    }
+  ],
+  "hopperAssignments": [
+    {
+      "hopper": "S-1",
+      "buffer": "A1",
+      "partId": 13,
+      "article": "832165",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "M-1",
+      "buffer": "A2",
+      "partId": 1,
+      "article": "830088",
+      "deliverQuantity": 1000
+    },
+    {
+      "hopper": "S-2",
+      "buffer": "A2",
+      "partId": 21,
+      "article": "P100000192",
+      "deliverQuantity": 300
+    },
+    {
+      "hopper": "W-1",
+      "buffer": "A3",
+      "partId": 8,
+      "article": "831008",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "S-3",
+      "buffer": "A4",
+      "partId": 10,
+      "article": "831490",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "S-4",
+      "buffer": "A4",
+      "partId": 11,
+      "article": "831981",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "L-1",
+      "buffer": "B1",
+      "partId": 12,
+      "article": "832110",
+      "deliverQuantity": 1000
+    },
+    {
+      "hopper": "W-2",
+      "buffer": "B1",
+      "partId": 14,
+      "article": "P000036407",
+      "deliverQuantity": 800
+    },
+    {
+      "hopper": "S-5",
+      "buffer": "B1",
+      "partId": 15,
+      "article": "P000038354",
+      "deliverQuantity": 100
+    },
+    {
+      "hopper": "L-2",
+      "buffer": "B2",
+      "partId": 2,
+      "article": "830132",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "W-3",
+      "buffer": "B3",
+      "partId": 4,
+      "article": "830491",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "W-4",
+      "buffer": "B3",
+      "partId": 7,
+      "article": "830754",
+      "deliverQuantity": 400
+    },
+    {
+      "hopper": "W-5",
+      "buffer": "B4",
+      "partId": 5,
+      "article": "830495",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "W-6",
+      "buffer": "B4",
+      "partId": 6,
+      "article": "830749",
+      "deliverQuantity": 400
+    },
+    {
+      "hopper": "M-2",
+      "buffer": "B4",
+      "partId": 18,
+      "article": "P000038406",
+      "deliverQuantity": 100
+    },
+    {
+      "hopper": "W-7",
+      "buffer": "B4",
+      "partId": 19,
+      "article": "P000042390",
+      "deliverQuantity": 200
+    },
+    {
+      "hopper": "L-3",
+      "buffer": "C1",
+      "partId": 16,
+      "article": "P000038403",
+      "deliverQuantity": 1000
+    },
+    {
+      "hopper": "L-4",
+      "buffer": "C4",
+      "partId": 3,
+      "article": "830232",
+      "deliverQuantity": 300
+    },
+    {
+      "hopper": "M-3",
+      "buffer": "C4",
+      "partId": 20,
+      "article": "P000042538",
+      "deliverQuantity": 300
+    },
+    {
+      "hopper": "W-8",
+      "buffer": "C4",
+      "partId": 22,
+      "article": "P000038969",
+      "deliverQuantity": 300
+    }
+  ],
+  "robotarmDeliveries": [
+    {
+      "buffer": "A3",
+      "partId": 9,
+      "article": "831009",
+      "deliverQuantity": 200
+    },
+    {
+      "buffer": "B2",
+      "partId": 17,
+      "article": "P000038404",
+      "deliverQuantity": 200
+    }
+  ]
+}
