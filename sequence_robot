@@ -1,0 +1,1271 @@
+#!/usr/bin/python3
+"""
+implemt still need of
+conveyor belt
+
+
+
+
+
+calib_detect.py — RealSense world calibration + SAM3 detector
+                  + sequence-driven pick & place runner.
+
+Per-frame px_per_mm is estimated from ArUco markers and written into
+the GRIPPERS dict, so the gripper feasibility check works in real units.
+
+Pick decision also looks at NEIGHBOURING detections:
+  - parallel gripper: both finger footprints must be free of other parts
+  - suction gripper : a disc around the cup centre must be free of other parts
+
+Sequence behaviour (NEW):
+  - Each sequence item may specify "count" (default 1): how many parts to
+    pick from that tray. After every successful pick a NEW picture is
+    taken (parts have shifted/are now gone).
+  - If a detection cycle finds nothing acceptable, the runner asks the
+    operator to *shake the plate*, waits for confirmation, and retries
+    up to "retries" times before giving up on that item.
+
+Keys:
+  L           = click test point
+  R           = clear clicked points
+  SPACE       = lock/unlock calibration
+  C           = clear marker history
+  S           = save calibration
+  D           = load calibration
+  X           = run SAM3 detection on current frame (using ACTIVE_PART)
+  1..9        = switch active part (by index in PARTS)
+  P           = run pick & place SEQUENCE from sequence_robotic_arm.json
+  ESC         = quit
+"""
+
+import cv2
+import numpy as np
+import pyrealsense2 as rs
+from collections import deque
+import json
+import os
+import time
+
+import torch
+from scipy.ndimage import binary_erosion, distance_transform_edt
+from PIL import Image, ImageDraw
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
+
+# ============================================================
+# WORKSPACE / CALIBRATION SETTINGS
+# ============================================================
+MARKER_SIZE = 0.037
+HALF = MARKER_SIZE / 2
+DX_15 = 0.173
+DY_13 = 0.263
+
+WORLD_MARKERS = {
+    1: np.array([HALF,         HALF,         0.0]),
+    5: np.array([DX_15 + HALF, HALF,         0.0]),
+    0: np.array([HALF,         DY_13 + HALF, 0.0]),
+    2: np.array([DX_15 + HALF, DY_13 + HALF, 0.0]),
+}
+EXPECTED_IDS = set(WORLD_MARKERS.keys())
+WORKSPACE_W = DX_15 + MARKER_SIZE
+WORKSPACE_H = DY_13 + MARKER_SIZE
+
+COLOR_W, COLOR_H = 1280, 720
+DEPTH_W, DEPTH_H = 1280, 720
+FPS = 30
+UI_SCALE = COLOR_W / 640.0
+
+_p = int(round(7 * UI_SCALE))
+DEPTH_PATCH_SIZE   = _p if _p % 2 == 1 else _p + 1
+MAX_FIT_ERR_M      = 0.010
+MAX_REPROJ_ERR_PX  = 2.0 * UI_SCALE
+AVG_WINDOW         = 30
+CALIB_FILE         = "world_calib.json"
+
+CAPTURE_PATH       = "captured.png"
+DETECT_OUTPUT_PATH = "output_detect.jpg"
+
+# ============================================================
+# SEQUENCE / ROBOT SETTINGS
+# ============================================================
+SEQUENCE_FILE       = "sequence_robotic_arm.json"
+ROBOT_CALIB_FILE    = "robot_world_calib.json"   # 4x4 T_robot_world
+APPROACH_DZ_MM      = 10.0    # +10 mm above pick (your spec)
+RETREAT_DZ_MM       = 50.0    # safe travel height above pick
+DEFAULT_DROP_Z_MM   = 50.0    # drop height above box origin
+
+# After picking, wait this long before retaking the picture so depth
+# stabilises and any disturbed neighbours come to rest.
+POST_PICK_SETTLE_S  = 0.8
+
+# How long to keep grabbing frames so the freshly-taken picture is
+# actually a fresh frame (depth filter pipeline has latency).
+FRAME_FLUSH_COUNT   = 5
+
+# ============================================================
+# GRIPPERS
+# ============================================================
+GRIPPERS = {
+    "parallel": {
+        "description": "Two-finger parallel gripper",
+        # Hardware
+        "max_opening_mm":        80,
+        "min_opening_mm":        1,
+        "finger_length_mm":      1001,
+        "finger_width_mm":       5,
+        "finger_thickness_mm":   5,
+        "max_payload_g":         500,
+        # Planning margins
+        "grasp_margin_mm":       4,
+        "side_clearance_mm":     8,
+        "approach_clearance_mm": 15,
+        # Pixel helpers
+        "finger_pad_px":         20,
+        "px_per_mm":             None,
+    },
+    "suction": {
+        "description": "Suction cup",
+        "cup_diameter_mm":       20,
+        "max_payload_g":         300,
+        "flatness_tolerance_mm": 1.5,
+        "edge_margin_mm":        5,
+        "min_object_area_px":    800,
+        "px_per_mm":             None,
+    },
+}
+
+# ============================================================
+# PARTS DICTIONARY
+# ============================================================
+PARTS = {
+    "black_block": {
+        "name":    "Black block",
+        "prompt":  "black object",
+        "gripper": "parallel",
+        "selection": {
+            "min_score":            0.60,
+            "min_area_px":          500,
+            "max_area_px":          50000,
+            "max_aspect_ratio":     2.5,
+            "min_compactness":      0.50,
+            "require_in_workspace": True,
+        },
+    },
+    "vilt": {
+        "name":    "vilt sticker",
+        "prompt":  "black object",
+        "gripper": "suction",
+        "selection": {
+            "min_score":            0.75,
+            "min_area_px":          4000,
+            "require_in_workspace": True,
+        },
+    },
+    "manuel": {
+        "name":    "manuel",
+        "prompt":  "text",
+        "gripper": "suction",
+        "selection": {
+            "min_score":            0.45,
+            "min_area_px":          1000,
+            "require_in_workspace": False,
+        },
+    },
+    "blue object": {
+        "name":    "blue object",
+        "prompt":  "blue object",
+        "gripper": "parallel",
+        "selection": {
+            "min_score":            0.45,
+            "min_area_px":          300,
+            "max_area_px":          500,
+            "require_in_workspace": True,
+        },
+    },
+    "black nail": {
+        "name":    "black nail",
+        "prompt":  "black object",
+        "gripper": "parallel",
+        "selection": {
+            "min_score":            0.45,
+            "min_area_px":          300,
+            "max_area_px":          500,
+            "require_in_workspace": True,
+        },
+    },
+    "plastic bags": {
+        "name":    "plastic bags",
+        "prompt":  "plastic ",
+        "gripper": "parallel",
+        "selection": {
+            "min_score":            0.4,
+            "min_area_px":          300,
+            "require_in_workspace": True,
+        },
+    },
+    "black cap big": {
+        "name":    "black cap big",
+        "prompt":  "black object",
+        "gripper": "suction",
+        "selection": {
+            "min_score":            0.75,
+            "min_area_px":          300,
+            "max_area_px":          1500,
+            "require_in_workspace": True,
+        },
+    },
+}
+
+ACTIVE_PART = "black_block"
+PART_KEYS = list(PARTS.keys())
+
+# ============================================================
+# REALSENSE
+# ============================================================
+pipeline = rs.pipeline()
+config = rs.config()
+config.enable_stream(rs.stream.color, COLOR_W, COLOR_H, rs.format.bgr8, FPS)
+config.enable_stream(rs.stream.depth, DEPTH_W, DEPTH_H, rs.format.z16, FPS)
+profile = pipeline.start(config)
+align = rs.align(rs.stream.color)
+
+depth_sensor = profile.get_device().first_depth_sensor()
+depth_scale = depth_sensor.get_depth_scale()
+
+spatial = rs.spatial_filter()
+spatial.set_option(rs.option.filter_magnitude, 2)
+spatial.set_option(rs.option.filter_smooth_alpha, 0.5)
+spatial.set_option(rs.option.filter_smooth_delta, 20)
+temporal = rs.temporal_filter()
+temporal.set_option(rs.option.filter_smooth_alpha, 0.4)
+temporal.set_option(rs.option.filter_smooth_delta, 20)
+hole_filling = rs.hole_filling_filter(1)
+
+intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+camera_matrix = np.array([[intr.fx, 0, intr.ppx],
+                          [0, intr.fy, intr.ppy],
+                          [0, 0, 1]], dtype=np.float64)
+dist_coeffs = np.array(intr.coeffs, dtype=np.float64)
+
+print(f"Stream: {intr.width}x{intr.height}  fx={intr.fx:.1f} fy={intr.fy:.1f}")
+
+# ============================================================
+# ARUCO
+# ============================================================
+aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_50)
+aruco_params = cv2.aruco.DetectorParameters()
+aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+
+marker_corners_local = np.array([
+    [-HALF,  HALF, 0], [ HALF,  HALF, 0],
+    [ HALF, -HALF, 0], [-HALF, -HALF, 0],
+], dtype=np.float64)
+
+# ============================================================
+# GLOBALS
+# ============================================================
+T_world_cam = None
+T_world_cam_locked = None
+calibration_locked = False
+latest_depth_image = None
+latest_color_image = None
+clicked_points = []
+marker_history = {mid: deque(maxlen=AVG_WINDOW) for mid in WORLD_MARKERS}
+current_px_per_mm = None
+
+# ============================================================
+# SAM3 LOAD
+# ============================================================
+print("\nLoading SAM3 model (one-time)…")
+_t0 = time.time()
+_sam3_model     = build_sam3_image_model().float()
+_sam3_processor = Sam3Processor(_sam3_model)
+print(f"SAM3 ready in {time.time()-_t0:.1f}s\n")
+
+# ============================================================
+# CALIBRATION HELPERS
+# ============================================================
+def get_depth_median(depth_image, u, v, size=DEPTH_PATCH_SIZE):
+    if depth_image is None:
+        return 0.0
+    h, w = depth_image.shape
+    hp = size // 2
+    y1, y2 = max(0, int(v) - hp), min(h, int(v) + hp + 1)
+    x1, x2 = max(0, int(u) - hp), min(w, int(u) + hp + 1)
+    patch = depth_image[y1:y2, x1:x2]
+    valid = patch[patch > 0]
+    if len(valid) < 5:
+        return 0.0
+    return float(np.median(valid)) * depth_scale
+
+def kabsch(P, Q):
+    cP = P.mean(axis=0); cQ = Q.mean(axis=0)
+    Pc = P - cP; Qc = Q - cQ
+    H = Pc.T @ Qc
+    U, S, Vt = np.linalg.svd(H)
+    d = np.sign(np.linalg.det(Vt.T @ U.T))
+    R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
+    t = cQ - R @ cP
+    pred = (R @ P.T).T + t
+    per_pt = np.linalg.norm(pred - Q, axis=1)
+    return R, t, float(per_pt.mean()), per_pt
+
+def get_active_T():
+    return T_world_cam_locked if calibration_locked else T_world_cam
+
+def pixel_to_world(u, v, depth_image):
+    T = get_active_T()
+    if T is None:
+        return None
+    depth = get_depth_median(depth_image, u, v)
+    if depth <= 0:
+        return None
+    pt_cam = rs.rs2_deproject_pixel_to_point(intr, [float(u), float(v)], depth)
+    pt_h = np.array([pt_cam[0], pt_cam[1], pt_cam[2], 1.0])
+    return (T @ pt_h)[:3]
+
+def in_workspace(world_xyz):
+    x, y = world_xyz[0], world_xyz[1]
+    return (0.0 <= x <= WORKSPACE_W) and (0.0 <= y <= WORKSPACE_H)
+
+def save_calibration(T_wc, residual_m):
+    data = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "T_world_cam": T_wc.tolist(),
+        "marker_size_m": MARKER_SIZE,
+        "kabsch_residual_mm": (residual_m * 1000.0) if residual_m is not None else None,
+        "intrinsics": {"fx": intr.fx, "fy": intr.fy,
+                       "ppx": intr.ppx, "ppy": intr.ppy,
+                       "width": intr.width, "height": intr.height},
+    }
+    with open(CALIB_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"Calibration saved -> {CALIB_FILE}")
+
+def load_calibration():
+    if not os.path.exists(CALIB_FILE):
+        print(f"No calibration file: {CALIB_FILE}")
+        return None
+    with open(CALIB_FILE, "r") as f:
+        data = json.load(f)
+    T = np.array(data["T_world_cam"], dtype=np.float64)
+    print(f"Calibration loaded  (residual={data.get('kabsch_residual_mm','?')} mm)")
+    return T
+
+def update_px_per_mm_from_aruco(corners_list, ids_array):
+    """Estimate px/mm from average ArUco side length and write into GRIPPERS."""
+    global current_px_per_mm
+    if ids_array is None or len(ids_array) == 0:
+        return
+    sides_px = []
+    for c in corners_list:
+        pts = c.reshape(4, 2)
+        for i in range(4):
+            sides_px.append(np.linalg.norm(pts[i] - pts[(i + 1) % 4]))
+    if not sides_px:
+        return
+    avg_side_px = float(np.mean(sides_px))
+    px_per_mm = avg_side_px / (MARKER_SIZE * 1000.0)
+    current_px_per_mm = px_per_mm
+    for g in GRIPPERS.values():
+        g["px_per_mm"] = px_per_mm
+
+# ============================================================
+# DETECTION HELPERS
+# ============================================================
+def mask_to_bool(mask):
+    m = mask.cpu().numpy()
+    if m.ndim == 3:
+        m = m.squeeze(0)
+    return m.astype(bool)
+
+def principal_axes(bool_mask):
+    ys, xs = np.where(bool_mask)
+    if len(xs) < 5:
+        return 0.0, np.array([1., 0.]), np.array([0., 1.]), 0.0, 0.0
+    cx_m, cy_m = xs.mean(), ys.mean()
+    pts = np.column_stack([xs - cx_m, ys - cy_m]).astype(float)
+    cov = pts.T @ pts / len(pts)
+    vals, vecs = np.linalg.eigh(cov)
+    major = vecs[:, 1]
+    minor = np.array([-major[1], major[0]])
+    proj_major = pts @ major
+    proj_minor = pts @ minor
+    hw_major = (proj_major.max() - proj_major.min()) / 2.0
+    hw_minor = (proj_minor.max() - proj_minor.min()) / 2.0
+    angle = float(np.degrees(np.arctan2(major[1], major[0])))
+    return angle, major, minor, hw_major, hw_minor
+
+def compactness_score(bool_mask):
+    eroded = binary_erosion(bool_mask, iterations=1)
+    boundary = bool_mask ^ eroded
+    perim = boundary.sum()
+    area = bool_mask.sum()
+    return float(4 * np.pi * area / (perim ** 2)) if perim else 0.0
+
+def bbox_aspect_ratio_xyxy(box):
+    x0, y0, x1, y1 = [float(v) for v in box.tolist()]
+    w = max(x1 - x0, 1.0); h = max(y1 - y0, 1.0)
+    r = w / h
+    return max(r, 1.0 / r)
+
+def mask_centroid(bool_mask):
+    ys, xs = np.where(bool_mask)
+    if len(xs) == 0:
+        return None
+    return float(xs.mean()), float(ys.mean())
+
+# ============================================================
+# GRIPPER FEASIBILITY (with neighbour-clearance check)
+# ============================================================
+def _stamp_rect(canvas, centre, axis_along, axis_perp, half_along, half_perp):
+    H, W = canvas.shape
+    corners = np.array([
+        centre - half_along * axis_along - half_perp * axis_perp,
+        centre + half_along * axis_along - half_perp * axis_perp,
+        centre + half_along * axis_along + half_perp * axis_perp,
+        centre - half_along * axis_along + half_perp * axis_perp,
+    ], dtype=np.int32)
+    cv2.fillConvexPoly(canvas.view(np.uint8).reshape(H, W), corners, 1)
+    return canvas
+
+def gripper_can_grasp(part, bool_mask, occupied_others):
+    g = GRIPPERS[part["gripper"]]
+    ppm = g.get("px_per_mm")
+    info = {"gripper": part["gripper"]}
+
+    if ppm is None or ppm <= 0:
+        return False, "no px_per_mm (no ArUco visible)", info
+
+    if part["gripper"] == "parallel":
+        ang, major, minor, hw_major, hw_minor = principal_axes(bool_mask)
+        c = mask_centroid(bool_mask)
+        if c is None:
+            return False, "empty mask", info
+        centre = np.array(c)
+        info.update({
+            "centre": centre, "major": major, "minor": minor,
+            "hw_major": hw_major, "hw_minor": hw_minor,
+            "angle_deg": ang,
+        })
+
+        width_mm  = (2.0 * hw_minor) / ppm
+        length_mm = (2.0 * hw_major) / ppm
+        info["width_mm"]  = width_mm
+        info["length_mm"] = length_mm
+
+        if width_mm < g["min_opening_mm"]:
+            return False, f"too thin ({width_mm:.1f}mm < {g['min_opening_mm']}mm)", info
+        usable_max = g["max_opening_mm"] - g["grasp_margin_mm"]
+        if width_mm > usable_max:
+            return False, f"too wide ({width_mm:.1f}mm > {usable_max:.1f}mm)", info
+        if length_mm > g["finger_length_mm"]:
+            return False, f"too long ({length_mm:.1f}mm > {g['finger_length_mm']}mm)", info
+
+        finger_w_px  = (g["finger_width_mm"]     * ppm) / 2.0
+        finger_t_px  = (g["finger_thickness_mm"] * ppm) / 2.0
+        side_clr_px  = g["side_clearance_mm"]    * ppm
+        grasp_mar_px = g["grasp_margin_mm"]      * ppm
+
+        reach = hw_minor + grasp_mar_px + finger_t_px
+        p1 = centre + reach * minor
+        p2 = centre - reach * minor
+        info["finger_pts"] = (p1, p2)
+        info["finger_half_along"] = finger_w_px + side_clr_px
+        info["finger_half_perp"]  = finger_t_px + side_clr_px
+
+        H, W = bool_mask.shape
+        foot = np.zeros((H, W), dtype=bool)
+        for fp in (p1, p2):
+            _stamp_rect(foot, fp, major, minor,
+                        finger_w_px + side_clr_px,
+                        finger_t_px + side_clr_px)
+
+        if np.any(foot & occupied_others):
+            return False, "neighbour in finger path", info
+
+        return True, "ok", info
+
+    elif part["gripper"] == "suction":
+        c = mask_centroid(bool_mask)
+        if c is None:
+            return False, "empty mask", info
+        cx, cy = c
+        info["centre"] = np.array([cx, cy])
+        info["angle_deg"] = 0.0
+
+        area_px = int(bool_mask.sum())
+        if area_px < g["min_object_area_px"]:
+            return False, f"area too small ({area_px} < {g['min_object_area_px']})", info
+
+        dt = distance_transform_edt(bool_mask)
+        max_r_px = float(dt.max())
+        cup_r_px = (g["cup_diameter_mm"] / 2.0) * ppm
+        info["cup_r_px"] = cup_r_px
+        info["edge_margin_px"] = g["edge_margin_mm"] * ppm
+        if max_r_px < cup_r_px:
+            return False, (f"no flat spot for cup "
+                           f"(max_r={max_r_px:.0f}px < cup_r={cup_r_px:.0f}px)"), info
+
+        H, W = bool_mask.shape
+        yy, xx = np.ogrid[:H, :W]
+        clr_r = cup_r_px + g["edge_margin_mm"] * ppm
+        disc = (xx - cx) ** 2 + (yy - cy) ** 2 <= clr_r ** 2
+        if np.any(disc & occupied_others):
+            return False, "neighbour within edge margin", info
+
+        return True, "ok", info
+
+    return False, f"unknown gripper {part['gripper']!r}", info
+
+# ============================================================
+# SELECTION FILTER
+# ============================================================
+def passes_selection(part, score, area, aspect, compact, world_xyz):
+    sel = part["selection"]
+    if "min_score" in sel and score < sel["min_score"]:
+        return False, f"score {score:.2f} < {sel['min_score']}"
+    if "min_area_px" in sel and area < sel["min_area_px"]:
+        return False, f"area {area} < {sel['min_area_px']}"
+    if "max_area_px" in sel and area > sel["max_area_px"]:
+        return False, f"area {area} > {sel['max_area_px']}"
+    if "max_aspect_ratio" in sel and aspect > sel["max_aspect_ratio"]:
+        return False, f"aspect {aspect:.2f} > {sel['max_aspect_ratio']}"
+    if "min_compactness" in sel and compact < sel["min_compactness"]:
+        return False, f"compact {compact:.2f} < {sel['min_compactness']}"
+    if sel.get("require_in_workspace", False):
+        if world_xyz is None:
+            return False, "no world XYZ"
+        if not in_workspace(world_xyz):
+            return False, "outside workspace"
+    return True, "ok"
+
+# ============================================================
+# DRAW RESULTS
+# ============================================================
+PALETTE = [(80,140,255,90),(80,200,120,90),(255,200,50,90),
+           (200,80,255,90),(50,220,220,90),(255,80,80,90)]
+
+def draw_results(image, candidates, best_idx):
+    overlay = Image.new("RGBA", image.size, (0,0,0,0))
+    for i, cand in enumerate(candidates):
+        layer = np.zeros((*cand["mask_bool"].shape, 4), dtype=np.uint8)
+        col = PALETTE[i % len(PALETTE)] if cand["accepted"] else (255,80,80,70)
+        layer[cand["mask_bool"]] = col
+        overlay = Image.alpha_composite(overlay, Image.fromarray(layer, "RGBA"))
+    image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(image)
+
+    for i, cand in enumerate(candidates):
+        x0, y0, x1, y1 = [int(v) for v in cand["box"].tolist()]
+        is_best = (i == best_idx)
+        if is_best:
+            col = "lime"; w = 4
+        elif cand["accepted"]:
+            col = "#90ee90"; w = 2
+        else:
+            col = "#ff5050"; w = 1
+        draw.rectangle([x0, y0, x1, y1], outline=col, width=w)
+
+        ginfo = cand.get("ginfo", {})
+        if ginfo.get("gripper") == "parallel" and "finger_pts" in ginfo:
+            p1, p2 = ginfo["finger_pts"]
+            centre = ginfo["centre"]
+            major  = ginfo["major"]
+            minor  = ginfo["minor"]
+            ha = ginfo["finger_half_along"]
+            hp = ginfo["finger_half_perp"]
+            L = ginfo["hw_minor"] + hp + 4
+            a = centre + L * minor
+            b = centre - L * minor
+            ax_col = "cyan" if cand["accepted"] else "#ff9090"
+            draw.line([a[0], a[1], b[0], b[1]], fill=ax_col, width=2)
+            fc = "lime" if is_best else ("orange" if cand["accepted"] else "red")
+            for fp in (p1, p2):
+                corners = [
+                    fp - ha * major - hp * minor,
+                    fp + ha * major - hp * minor,
+                    fp + ha * major + hp * minor,
+                    fp - ha * major + hp * minor,
+                ]
+                pts = [(float(c[0]), float(c[1])) for c in corners]
+                draw.polygon(pts, outline=fc)
+                draw.ellipse([fp[0]-3, fp[1]-3, fp[0]+3, fp[1]+3], fill=fc)
+
+        elif ginfo.get("gripper") == "suction" and "centre" in ginfo:
+            cx, cy = ginfo["centre"]
+            cup_r = ginfo.get("cup_r_px", 8)
+            clr_r = cup_r + ginfo.get("edge_margin_px", 0)
+            fc = "lime" if is_best else ("orange" if cand["accepted"] else "red")
+            draw.ellipse([cx-cup_r, cy-cup_r, cx+cup_r, cy+cup_r], outline=fc, width=2)
+            for a in range(0, 360, 20):
+                draw.arc([cx-clr_r, cy-clr_r, cx+clr_r, cy+clr_r],
+                         start=a, end=a+10, fill="cyan", width=1)
+
+        label = f"#{i+1} s={cand['score']:.2f}"
+        if not cand["accepted"]:
+            label += f"  DROP: {cand['reason']}"
+        draw.text((x0, max(0, y0 - 14)), label, fill=col)
+
+    if best_idx is not None:
+        cand = candidates[best_idx]
+        cx, cy = cand["pick_px"]
+        r = 22
+        draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline="red", width=3)
+        draw.line([cx-2*r, cy, cx+2*r, cy], fill="red", width=2)
+        draw.line([cx, cy-2*r, cx, cy+2*r], fill="red", width=2)
+        draw.text((cx + r + 4, cy - 8), "PICK", fill="red")
+    return image
+
+# ============================================================
+# CORE DETECTOR — used by both X-key and the sequence runner
+# ============================================================
+def detect_part(part_key, bgr_frame, depth_image, save_annot=True, show=True):
+    """
+    Returns dict:
+      {
+        "best": {pixel:(u,v), world:np.array, yaw_deg:float,
+                 score:float, part:str, gripper:str} | None,
+        "candidates": [...],
+        "annotated_path": str | None,
+      }
+    """
+    part = PARTS[part_key]
+    g    = GRIPPERS[part["gripper"]]
+    print("\n" + "═" * 78)
+    print(f" SAM3 DETECT — part: {part['name']!r}  prompt: {part['prompt']!r}")
+    print(f" gripper: {part['gripper']}  px_per_mm: "
+          f"{g.get('px_per_mm') if g.get('px_per_mm') else 'N/A'}")
+    print("═" * 78)
+
+    cv2.imwrite(CAPTURE_PATH, bgr_frame)
+    image = Image.open(CAPTURE_PATH).convert("RGB")
+
+    t0 = time.time()
+    try:
+        with torch.autocast(device_type="cuda", dtype=torch.float32):
+            state  = _sam3_processor.set_image(image)
+            output = _sam3_processor.set_text_prompt(state=state, prompt=part["prompt"])
+    except Exception as e:
+        print(f"  SAM3 failed: {e}")
+        return {"best": None, "candidates": [], "annotated_path": None}
+
+    masks, boxes, scores = output["masks"], output["boxes"], output["scores"]
+    if len(scores) == 0:
+        print("  No detections at all.")
+        return {"best": None, "candidates": [], "annotated_path": None}
+    print(f"  SAM3 returned {len(scores)} raw detections in {time.time()-t0:.1f}s")
+
+    bool_masks = [mask_to_bool(m) for m in masks]
+
+    candidates = []
+    print(f"\n  {'#':>2}  {'score':>5}  {'area':>6}  {'asp':>4}  {'cmp':>4}  "
+          f"{'X cm':>7} {'Y cm':>7} {'Z cm':>7}   verdict")
+    print("  " + "-" * 76)
+
+    for i in range(len(scores)):
+        bm = bool_masks[i]
+        score = float(scores[i].item())
+        area = int(bm.sum())
+        aspect = bbox_aspect_ratio_xyxy(boxes[i])
+        compact = compactness_score(bm)
+        cen = mask_centroid(bm)
+        if cen is None:
+            continue
+        cx, cy = cen
+        world = pixel_to_world(cx, cy, depth_image)
+
+        ok_sel, reason_sel = passes_selection(part, score, area, aspect, compact, world)
+
+        occupied_others = np.zeros_like(bm)
+        for j, bm_j in enumerate(bool_masks):
+            if j != i:
+                occupied_others |= bm_j
+
+        if ok_sel:
+            ok_grip, reason_grip, ginfo = gripper_can_grasp(part, bm, occupied_others)
+        else:
+            ok_grip, reason_grip, ginfo = False, "—", {"gripper": part["gripper"]}
+
+        accepted = ok_sel and ok_grip
+        reason = reason_sel if not ok_sel else (reason_grip if not ok_grip else "ok")
+
+        if world is None:
+            world_str = "  ---     ---     ---  "
+        else:
+            world_str = (f"{world[0]*100:7.2f} {world[1]*100:7.2f} {world[2]*100:7.2f}")
+
+        verdict = "OK" if accepted else f"DROP ({reason})"
+        print(f"  {i+1:>2}  {score:>5.2f}  {area:>6}  "
+              f"{aspect:>4.2f}  {compact:>4.2f}  "
+              f"{world_str}   {verdict}")
+
+        candidates.append({
+            "mask_bool": bm,
+            "box": boxes[i],
+            "score": score,
+            "area": area,
+            "aspect": aspect,
+            "compact": compact,
+            "world": world,
+            "pick_px": (int(round(cx)), int(round(cy))),
+            "accepted": accepted,
+            "reason": reason,
+            "ginfo": ginfo,
+        })
+
+    accepted_idx = [k for k, c in enumerate(candidates) if c["accepted"]]
+    best_idx = None
+    best_payload = None
+    if not accepted_idx:
+        print("\n  No candidate passed all filters.")
+    else:
+        accepted_idx.sort(key=lambda k: candidates[k]["score"], reverse=True)
+        best_idx = accepted_idx[0]
+        c = candidates[best_idx]
+
+        # grasp yaw: for parallel gripper we want fingers to close
+        # across the SHORT side -> the closing direction is the minor axis
+        # -> the gripper "yaw" (orientation of the jaws line) is along
+        #    the major axis, but the wrist angle is often expressed as
+        #    angle of jaw-line; here we expose the principal-axis angle
+        #    rotated 90° so the fingers close across the short axis.
+        ang = float(c["ginfo"].get("angle_deg", 0.0))
+        if part["gripper"] == "parallel":
+            yaw_deg = ang + 90.0
+        else:
+            yaw_deg = 0.0
+        # wrap to [-180,180]
+        yaw_deg = ((yaw_deg + 180.0) % 360.0) - 180.0
+
+        print("\n  ── BEST PICK ──")
+        print(f"   instance # : {best_idx+1}")
+        print(f"   score      : {c['score']:.3f}")
+        print(f"   pixel      : {c['pick_px']}")
+        print(f"   yaw (world): {yaw_deg:+.1f}°")
+        if c["world"] is None:
+            print("   WORLD XYZ  : (no depth / no calibration)")
+            world_xyz = None
+        else:
+            world_xyz = c["world"]
+            wx, wy, wz = world_xyz * 100
+            print(f"   X = {wx:7.2f} cm")
+            print(f"   Y = {wy:7.2f} cm")
+            print(f"   Z = {wz:7.2f} cm")
+
+        best_payload = {
+            "pixel":   c["pick_px"],
+            "world":   world_xyz,
+            "yaw_deg": yaw_deg,
+            "score":   c["score"],
+            "part":    part_key,
+            "gripper": part["gripper"],
+        }
+
+    annotated_path = None
+    if save_annot:
+        annotated = draw_results(image.copy(), candidates, best_idx)
+        annotated.save(DETECT_OUTPUT_PATH)
+        annotated_path = DETECT_OUTPUT_PATH
+        print(f"\n   annotated img: {DETECT_OUTPUT_PATH}")
+        if show:
+            ann_bgr = cv2.cvtColor(np.array(annotated), cv2.COLOR_RGB2BGR)
+            cv2.namedWindow("SAM3 Detections", cv2.WINDOW_NORMAL)
+            cv2.imshow("SAM3 Detections", ann_bgr)
+            cv2.waitKey(1)
+    print("═" * 78 + "\n")
+
+    return {
+        "best": best_payload,
+        "candidates": candidates,
+        "annotated_path": annotated_path,
+    }
+
+# Wrapper for the X-key path
+def run_sam3_detect(bgr_frame, depth_image):
+    detect_part(ACTIVE_PART, bgr_frame, depth_image, save_annot=True, show=True)
+
+# ============================================================
+# ROBOT INTERFACE  (stub — replace with your real driver)
+# ============================================================
+class RobotArm:
+    def __init__(self, name="dummy"):
+        self.name = name
+        self.pose = {"x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0}
+        self.gripper_state = {"parallel": "open", "suction": "off"}
+
+    def move_to(self, x_mm, y_mm, z_mm, yaw_deg, speed=100):
+        print(f"   [ROBOT] move -> "
+              f"X={x_mm:7.2f}  Y={y_mm:7.2f}  Z={z_mm:7.2f}  "
+              f"yaw={yaw_deg:+6.1f}°  (speed={speed})")
+        self.pose.update(x=x_mm, y=y_mm, z=z_mm, yaw=yaw_deg)
+        time.sleep(0.2)
+
+    def close_gripper(self, gripper_name):
+        if gripper_name == "parallel":
+            print("   [ROBOT] parallel gripper -> CLOSE")
+            self.gripper_state["parallel"] = "closed"
+        elif gripper_name == "suction":
+            print("   [ROBOT] suction cup -> VACUUM ON")
+            self.gripper_state["suction"] = "on"
+        time.sleep(0.3)
+
+    def open_gripper(self, gripper_name):
+        if gripper_name == "parallel":
+            print("   [ROBOT] parallel gripper -> OPEN")
+            self.gripper_state["parallel"] = "open"
+        elif gripper_name == "suction":
+            print("   [ROBOT] suction cup -> VACUUM OFF")
+            self.gripper_state["suction"] = "off"
+        time.sleep(0.2)
+
+    def home(self):
+        print("   [ROBOT] move -> HOME")
+        self.move_to(0, 0, 200, 0, speed=200)
+
+
+ROBOT = RobotArm()
+
+# ============================================================
+# WORLD <-> ROBOT TRANSFORM
+# ============================================================
+def _default_T_robot_world():
+    T = np.eye(4)
+    T[0, 0] = 1000.0
+    T[1, 1] = 1000.0
+    T[2, 2] = 1000.0
+    return T
+
+def load_robot_world_transform(path=ROBOT_CALIB_FILE):
+    if not os.path.exists(path):
+        print(f"[warn] {path} not found — using identity m->mm transform.")
+        return _default_T_robot_world()
+    with open(path, "r") as f:
+        data = json.load(f)
+    T = np.array(data["T_robot_world"], dtype=np.float64)
+    print(f"[ok] Loaded robot/world transform from {path}")
+    return T
+
+T_ROBOT_WORLD = load_robot_world_transform()
+
+def world_to_robot(world_xyz_m, world_yaw_deg=0.0):
+    p_h = np.array([world_xyz_m[0], world_xyz_m[1], world_xyz_m[2], 1.0])
+    p_robot = (T_ROBOT_WORLD @ p_h)[:3]
+    R = T_ROBOT_WORLD[:3, :3].copy()
+    for i in range(3):
+        n = np.linalg.norm(R[:, i])
+        if n > 1e-9:
+            R[:, i] /= n
+    yaw_offset_deg = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
+    robot_yaw = world_yaw_deg + yaw_offset_deg
+    robot_yaw = ((robot_yaw + 180.0) % 360.0) - 180.0
+    return p_robot, robot_yaw
+
+# ============================================================
+# CAMERA HELPERS for the sequence runner
+# ============================================================
+def grab_fresh_frame(flush=FRAME_FLUSH_COUNT):
+    """
+    Pull a few frames from the pipeline so we get an up-to-date image
+    after parts have moved or after the robot just disturbed the scene.
+    Updates the global latest_color_image / latest_depth_image and also
+    refreshes px_per_mm from any visible ArUco markers.
+    Returns (color_bgr, depth_u16).
+    """
+    global latest_color_image, latest_depth_image
+    last_color = last_depth = None
+    for _ in range(max(1, flush)):
+        frames = pipeline.wait_for_frames()
+        aligned = align.process(frames)
+        cf = aligned.get_color_frame()
+        df = aligned.get_depth_frame()
+        if not cf or not df:
+            continue
+        df = spatial.process(df)
+        df = temporal.process(df)
+        df = hole_filling.process(df)
+        last_depth = np.asanyarray(df.as_depth_frame().get_data())
+        last_color = np.asanyarray(cf.get_data())
+
+    if last_color is not None:
+        latest_color_image = last_color
+        latest_depth_image = last_depth
+        corners, ids, _ = detector.detectMarkers(last_color)
+        update_px_per_mm_from_aruco(corners, ids)
+
+    return last_color, last_depth
+
+def operator_prompt(msg, allowed=("placed",)):
+    """
+    Blocking input prompt. Returns the literal lowercase word the operator
+    typed (must be one of `allowed`, or 'skip'/'abort' which are always
+    accepted).
+    """
+    extras = ("skip", "abort")
+    while True:
+        try:
+            ans = input(f"   >>> {msg}: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "abort"
+        if ans in allowed or ans in extras:
+            return ans
+        print(f"       (type one of: {', '.join(list(allowed)+list(extras))})")
+
+# ============================================================
+# SEQUENCE RUNNER  — multi-pick + shake-the-plate retry
+# ============================================================
+def run_sequence(path=SEQUENCE_FILE):
+    if not os.path.exists(path):
+        print(f"[ERR] sequence file not found: {path}")
+        return
+    with open(path, "r") as f:
+        items = json.load(f)
+    if not isinstance(items, list) or not items:
+        print(f"[ERR] sequence file empty or wrong format: {path}")
+        return
+
+    print("\n" + "█" * 78)
+    print(f" RUNNING SEQUENCE: {path}  ({len(items)} item(s))")
+    print("█" * 78)
+
+    for step_idx, item in enumerate(items, 1):
+        tray       = item.get("tray",        f"#{step_idx}")
+        part_key   = item.get("part")
+        drop_box   = item.get("drop_box_mm", [0.0, 0.0, DEFAULT_DROP_Z_MM])
+        retries    = int(item.get("retries", 3))
+        count      = int(item.get("count",   1))   # how many to pick from this tray
+        approach_dz = float(item.get("approach_dz_mm", APPROACH_DZ_MM))
+        retreat_dz  = float(item.get("retreat_dz_mm",  RETREAT_DZ_MM))
+
+        print("\n" + "─" * 78)
+        print(f" STEP {step_idx}/{len(items)}  tray={tray}  part={part_key}  "
+              f"count={count}  retries={retries}")
+        print("─" * 78)
+
+        if part_key not in PARTS:
+            print(f"  [ERR] unknown part '{part_key}' — skipping.")
+            continue
+
+        # 1) ask operator to place the tray
+        print(f"   put tray {tray} on the plate")
+        ans = operator_prompt("type 'placed' when ready (or 'skip'/'abort')")
+        if ans == "abort":
+            print("   ABORT requested — leaving sequence.")
+            return
+        if ans == "skip":
+            print(f"   skipping tray {tray}.")
+            continue
+
+        # 2) pick `count` items from this tray
+        picked = 0
+        for pick_idx in range(1, count + 1):
+            print(f"\n   ── PICK {pick_idx}/{count}  (tray {tray}, part {part_key}) ──")
+
+            best = None
+            for attempt in range(1, retries + 1):
+                # Always take a FRESH picture — between picks the scene
+                # has changed because we just removed an item.
+                color, depth = grab_fresh_frame()
+                if color is None:
+                    print("   [ERR] no camera frame — aborting step.")
+                    break
+
+                result = detect_part(part_key, color, depth,
+                                     save_annot=True, show=True)
+                best = result["best"]
+                if best is not None and best["world"] is not None:
+                    break  # got a valid pick
+
+                # ── nothing found → ask operator to shake the plate ──
+                remaining = retries - attempt
+                print(f"\n   ⚠️  Could not find a usable '{part_key}'.")
+                if remaining <= 0:
+                    print( "      No retries left for this pick.")
+                    break
+                print(f"      Please SHAKE the plate so parts reposition.")
+                print(f"      ({remaining} retry/retries left)")
+                ans = operator_prompt(
+                    "type 'shaken' when done (or 'skip'/'abort')",
+                    allowed=("shaken",))
+                if ans == "abort":
+                    print("   ABORT requested — leaving sequence.")
+                    return
+                if ans == "skip":
+                    print("   skipping this pick.")
+                    best = None
+                    break
+                # else: loop and retake picture
+
+            if best is None or best["world"] is None:
+                print(f"   ✗ giving up on pick {pick_idx}/{count} for tray {tray}.")
+                # Move to next pick? If we couldn't find anything at all,
+                # there is probably nothing left in the crate -> break out
+                # of the count-loop instead of hammering the operator.
+                break
+
+            # 3) world -> robot
+            p_robot, robot_yaw = world_to_robot(best["world"], best["yaw_deg"])
+            xr, yr, zr = p_robot
+            print(f"   ROBOT pick target : "
+                  f"X={xr:7.2f} Y={yr:7.2f} Z={zr:7.2f}  yaw={robot_yaw:+.1f}°")
+
+            # 4) motion sequence
+            z_app    = zr + approach_dz   # +10 mm above pick
+            z_retr   = zr + retreat_dz    # safe travel height
+
+            print("   → approach")
+            ROBOT.move_to(xr, yr, z_retr, robot_yaw, speed=200)
+            ROBOT.move_to(xr, yr, z_app,  robot_yaw, speed=120)
+            print("   → descend to pick")
+            ROBOT.move_to(xr, yr, zr,     robot_yaw, speed=60)
+
+            # 5) close gripper per PARTS dict
+            ROBOT.close_gripper(best["gripper"])
+
+            print("   → retreat")
+            ROBOT.move_to(xr, yr, z_retr, robot_yaw, speed=120)
+
+            # 6) move to drop box and release
+            dx, dy, dz = drop_box
+            print(f"   → drop box  X={dx:.1f}  Y={dy:.1f}  Z={dz:.1f}")
+            ROBOT.move_to(dx, dy, max(dz, z_retr), robot_yaw, speed=200)
+            ROBOT.move_to(dx, dy, dz,              robot_yaw, speed=100)
+            ROBOT.open_gripper(best["gripper"])
+            ROBOT.move_to(dx, dy, max(dz, z_retr), robot_yaw, speed=150)
+
+            picked += 1
+            print(f"   ✓ pick {pick_idx}/{count} done "
+                  f"(total picked from tray {tray}: {picked})")
+
+            # settle before next picture
+            if pick_idx < count:
+                time.sleep(POST_PICK_SETTLE_S)
+
+        print(f"\n   Tray {tray} summary: {picked}/{count} picked.")
+
+    ROBOT.home()
+    print("\n" + "█" * 78)
+    print(" SEQUENCE COMPLETE")
+    print("█" * 78 + "\n")
+
+# ============================================================
+# MOUSE
+# ============================================================
+def mouse_callback(event, x, y, flags, param):
+    global clicked_points
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if latest_depth_image is None or get_active_T() is None:
+            print("No valid calibration."); return
+        world = pixel_to_world(x, y, latest_depth_image)
+        if world is None:
+            print(f"No depth at ({x},{y})."); return
+        clicked_points.append(((x, y), world))
+        if len(clicked_points) > 10:
+            clicked_points.pop(0)
+    elif event == cv2.EVENT_RBUTTONDOWN:
+        clicked_points = []
+
+cv2.namedWindow("World Calibration", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("World Calibration", COLOR_W, COLOR_H)
+cv2.setMouseCallback("World Calibration", mouse_callback)
+
+S_BIG, S_MED, S_SMALL = 0.55 * UI_SCALE, 0.50 * UI_SCALE, 0.42 * UI_SCALE
+T_BOLD = max(1, int(round(2 * UI_SCALE * 0.7)))
+T_THIN = max(1, int(round(UI_SCALE * 0.7)))
+LINE_H, LINE_HS = int(round(22 * UI_SCALE)), int(round(15 * UI_SCALE))
+
+print(f"Active part: {PARTS[ACTIVE_PART]['name']}")
+print("L=click  R=clear  SPACE=lock/unlock  C=clear hist  "
+      "S=save  D=load  X=detect  1..9=switch part  P=sequence  ESC=stop")
+for i, k in enumerate(PART_KEYS[:9]):
+    print(f"  {i+1}: {PARTS[k]['name']} (prompt={PARTS[k]['prompt']!r}, "
+          f"gripper={PARTS[k]['gripper']})")
+
+_loaded = load_calibration()
+if _loaded is not None:
+    T_world_cam_locked = _loaded
+    calibration_locked = True
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+try:
+    while True:
+        frames = pipeline.wait_for_frames()
+        aligned = align.process(frames)
+        color_frame = aligned.get_color_frame()
+        depth_frame = aligned.get_depth_frame()
+        if not color_frame or not depth_frame:
+            continue
+
+        df = spatial.process(depth_frame)
+        df = temporal.process(df)
+        df = hole_filling.process(df)
+        depth_frame_f = df.as_depth_frame()
+
+        latest_depth_image = np.asanyarray(depth_frame_f.get_data())
+        latest_color_image = np.asanyarray(color_frame.get_data())
+        img = latest_color_image.copy()
+
+        corners, ids, _ = detector.detectMarkers(img)
+        update_px_per_mm_from_aruco(corners, ids)
+
+        centers_depth, centers_ippe, pixel_centers = {}, {}, {}
+
+        if ids is not None:
+            cv2.aruco.drawDetectedMarkers(img, corners, ids)
+            for mid_arr, m_corner in zip(ids.flatten(), corners):
+                mid = int(mid_arr)
+                if mid not in WORLD_MARKERS:
+                    continue
+                img_pts = m_corner.reshape(4, 2).astype(np.float64)
+                cx_f, cy_f = img_pts.mean(axis=0)
+                pixel_centers[mid] = (cx_f, cy_f)
+                depth = get_depth_median(latest_depth_image, cx_f, cy_f)
+                if depth > 0:
+                    pt_cam = rs.rs2_deproject_pixel_to_point(intr, [cx_f, cy_f], depth)
+                    centers_depth[mid] = np.array(pt_cam, dtype=np.float64)
+                ok, rvec, tvec = cv2.solvePnP(
+                    marker_corners_local, img_pts,
+                    camera_matrix, dist_coeffs,
+                    flags=cv2.SOLVEPNP_IPPE_SQUARE)
+                if ok:
+                    centers_ippe[mid] = tvec.flatten()
+            for mid in centers_ippe:
+                if mid in WORLD_MARKERS:
+                    marker_history[mid].append(centers_ippe[mid])
+
+        ids_for_kabsch = sorted(m for m in marker_history
+                                if len(marker_history[m]) >= 3 and m in WORLD_MARKERS)
+        residual_m = None
+        fit_ok = z_ok = False
+        cam_pos_world = None
+        T_cam_world_show = None
+
+        if len(ids_for_kabsch) >= 3:
+            P = np.array([WORLD_MARKERS[m] for m in ids_for_kabsch], dtype=np.float64)
+            Q = np.array([np.median(np.stack(marker_history[m]), axis=0)
+                          for m in ids_for_kabsch], dtype=np.float64)
+            R, t, residual_m, _ = kabsch(P, Q)
+            T_cam_world_new = np.eye(4)
+            T_cam_world_new[:3, :3] = R
+            T_cam_world_new[:3, 3] = t
+            T_world_cam_new = np.linalg.inv(T_cam_world_new)
+            cam_pos_world = T_world_cam_new[:3, 3]
+            fit_ok = residual_m < MAX_FIT_ERR_M
+            z_ok = cam_pos_world[2] > 0
+            if fit_ok and z_ok:
+                T_cam_world_show = T_cam_world_new
+                if not calibration_locked:
+                    T_world_cam = T_world_cam_new
+
+        T_cam_world_for_viz = None
+        if calibration_locked and T_world_cam_locked is not None:
+            T_cam_world_for_viz = np.linalg.inv(T_world_cam_locked)
+        elif T_cam_world_show is not None:
+            T_cam_world_for_viz = T_cam_world_show
+
+        if T_cam_world_for_viz is not None:
+            R_cw = T_cam_world_for_viz[:3, :3]
+            t_cw = T_cam_world_for_viz[:3, 3]
+            rvec_w, _ = cv2.Rodrigues(R_cw)
+            cv2.drawFrameAxes(img, camera_matrix, dist_coeffs,
+                              rvec_w, t_cw.reshape(3, 1), 0.05, T_BOLD)
+            ws_world = np.array([
+                [0, 0, 0], [WORKSPACE_W, 0, 0],
+                [WORKSPACE_W, WORKSPACE_H, 0], [0, WORKSPACE_H, 0]], dtype=np.float64)
+            ws_img, _ = cv2.projectPoints(ws_world, rvec_w, t_cw,
+                                          camera_matrix, dist_coeffs)
+            cv2.polylines(img, [ws_img.reshape(-1, 2).astype(np.int32)],
+                          isClosed=True, color=(255, 0, 255),
+                          thickness=T_THIN, lineType=cv2.LINE_AA)
+
+        for (px, py), world in clicked_points:
+            col_dot = (0, 0, 255) if in_workspace(world) else (0, 165, 255)
+            cv2.circle(img, (px, py), int(6 * UI_SCALE), col_dot, -1)
+            label = (f"X={world[0]*100:.1f} Y={world[1]*100:.1f} "
+                     f"Z={world[2]*100:.1f}")
+            cv2.putText(img, label, (px + 10, py - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, S_MED,
+                        col_dot, T_THIN, cv2.LINE_AA)
+
+        y0 = int(28 * UI_SCALE)
+        p_name = PARTS[ACTIVE_PART]["name"]
+        p_grip = PARTS[ACTIVE_PART]["gripper"]
+        cv2.putText(img, f"Part: {p_name}  [gripper={p_grip}]  (X=detect  P=sequence)",
+                    (10, y0), cv2.FONT_HERSHEY_SIMPLEX, S_BIG,
+                    (0, 255, 255), T_BOLD, cv2.LINE_AA)
+        y0 += LINE_H
+
+        if current_px_per_mm is not None:
+            cv2.putText(img, f"scale: {current_px_per_mm:.2f} px/mm",
+                        (10, y0), cv2.FONT_HERSHEY_SIMPLEX, S_SMALL,
+                        (200, 200, 200), T_THIN, cv2.LINE_AA)
+            y0 += LINE_HS
+
+        if cam_pos_world is not None:
+            col = (0, 255, 0) if (fit_ok and z_ok) else (0, 0, 255)
+            cv2.putText(img,
+                        f"Cam: X={cam_pos_world[0]*100:5.1f} "
+                        f"Y={cam_pos_world[1]*100:5.1f} "
+                        f"Z={cam_pos_world[2]*100:5.1f} cm",
+                        (10, y0), cv2.FONT_HERSHEY_SIMPLEX,
+                        S_MED, col, T_THIN, cv2.LINE_AA)
+            y0 += LINE_HS
+            lock_label = "[LOCKED]" if calibration_locked else "[live]"
+            cv2.putText(img,
+                        f"Kabsch: {residual_m*1000:5.1f} mm  {lock_label}",
+                        (10, y0), cv2.FONT_HERSHEY_SIMPLEX, S_SMALL,
+                        (255, 0, 255) if calibration_locked else col,
+                        T_THIN, cv2.LINE_AA)
+            y0 += LINE_HS
+
+        cv2.putText(img,
+                    "L=click  SPACE=lock  S=save  D=load  X=detect  "
+                    "P=sequence  1..9=part  ESC=stop",
+                    (10, COLOR_H - int(12 * UI_SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, S_SMALL,
+                    (200, 200, 200), T_THIN, cv2.LINE_AA)
+
+        cv2.imshow("World Calibration", img)
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == 27:
+            break
+        elif key == 32:
+            if calibration_locked:
+                calibration_locked = False
+                T_world_cam_locked = None
+                print("UNLOCKED")
+            elif T_world_cam is not None and fit_ok and z_ok:
+                T_world_cam_locked = T_world_cam.copy()
+                calibration_locked = True
+                print(f"LOCKED (residual={residual_m*1000:.1f} mm)")
+            else:
+                print("Cannot lock yet.")
+        elif key in (ord('c'), ord('C')):
+            for mid in marker_history:
+                marker_history[mid].clear()
+        elif key in (ord('s'), ord('S')):
+            T_to_save = T_world_cam_locked if calibration_locked else T_world_cam
+            if T_to_save is not None:
+                save_calibration(T_to_save, residual_m)
+        elif key in (ord('d'), ord('D')):
+            T_loaded = load_calibration()
+            if T_loaded is not None:
+                T_world_cam_locked = T_loaded
+                calibration_locked = True
+        elif key in (ord('x'), ord('X')):
+            run_sam3_detect(latest_color_image.copy(), latest_depth_image)
+        elif key in (ord('p'), ord('P')):
+            run_sequence(SEQUENCE_FILE)
+        elif ord('1') <= key <= ord('9'):
+            idx = key - ord('1')
+            if idx < len(PART_KEYS):
+                ACTIVE_PART = PART_KEYS[idx]
+                print(f"Active part -> {PARTS[ACTIVE_PART]['name']}")
+
+finally:
+    pipeline.stop()
+    cv2.destroyAllWindows()
