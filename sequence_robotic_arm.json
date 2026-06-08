@@ -1,0 +1,37 @@
+[
+  {
+    "tray":        "A",
+    "part":        "black_block",
+    "drop_box_mm": [400.0, -100.0, 60.0],
+    "retries":     3
+  },
+  {
+    "tray":        "B",
+    "part":        "vilt",
+    "drop_box_mm": [400.0,    0.0, 60.0],
+    "retries":     2
+  },
+  { 
+    "tray":"A", 
+    "part":"black_block", 
+    "count":3,
+    "drop_box_mm":[400,-100,60], 
+    "retries":3 
+    },
+
+  { "tray":"B", "part":"vilt",       "count":1,
+    "drop_box_mm":[400,   0,60], "retries":2 },
+
+  {
+    "tray":        "C",
+    "part":        "blue object",
+    "drop_box_mm": [400.0,  100.0, 60.0],
+    "retries":     2
+  },
+  {
+    "tray":        "D",
+    "part":        "plastic bags",
+    "drop_box_mm": [400.0,  200.0, 80.0],
+    "retries":     2
+  }
+]
