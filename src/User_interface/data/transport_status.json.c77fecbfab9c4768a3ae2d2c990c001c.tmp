@@ -1,0 +1,92 @@
+{
+  "status": "aborted",
+  "message": "No Arduino connection available.",
+  "updatedAt": "2026-06-30T12:06:58",
+  "events": [
+    {
+      "time": "2026-06-30T12:06:50",
+      "line": "[PICK] Batch 2070BAE1 gestart - br",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:50",
+      "line": "[TRANSPORT] transport.py gestart met PID 18324",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:50",
+      "line": "[MAIN_CONTROL] main_control.py gestart met PID 18444",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:50",
+      "line": "[TRANSPORT] Starting batch 2070BAE1 with 1 hopper command(s).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:50",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Wachten 10 seconden voor start sequence...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:50",
+      "line": "[TRANSPORT] ARDUINO_PORTS not configured. Scanning serial ports for Arduinos.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:51",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over 10s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:52",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  9s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:53",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  8s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:54",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  7s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:55",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  6s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:56",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  5s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:06:58",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  4s",
+      "level": "info"
+    }
+  ],
+  "operatorNote": "",
+  "batchId": "2070BAE1",
+  "batchName": "br",
+  "currentIndex": null,
+  "totalCommands": 1,
+  "completedCommands": 0,
+  "failedCommands": 0,
+  "commands": [
+    {
+      "index": 0,
+      "arduinoId": 1,
+      "hopperNumber": 11,
+      "hopper": "L-1",
+      "buffer": "A4",
+      "article": "P000038403",
+      "quantity": 1,
+      "command": "1-11-1",
+      "status": "waiting"
+    }
+  ]
+}

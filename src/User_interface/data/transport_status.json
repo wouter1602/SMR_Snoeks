@@ -1,0 +1,652 @@
+{
+  "status": "idle",
+  "commands": [],
+  "events": [
+    {
+      "time": "2026-06-30T12:10:05",
+      "line": "[PICK] Batch F52454A1 gestart - go-nogo",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:05",
+      "line": "[TRANSPORT] transport.py gestart met PID 36100",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:05",
+      "line": "[MAIN_CONTROL] main_control.py gestart met PID 32224",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:05",
+      "line": "[TRANSPORT] Starting batch F52454A1 with 6 hopper command(s).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:05",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Wachten 10 seconden voor start sequence...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:05",
+      "line": "[TRANSPORT] ARDUINO_PORTS not configured. Scanning serial ports for Arduinos.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:06",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over 10s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:07",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  9s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:08",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  8s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:09",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  7s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:10",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  6s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:11",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  5s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:12",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  4s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:12",
+      "line": "[TRANSPORT] No Arduino controllers responded.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:12",
+      "line": "[TRANSPORT] No Arduino serial ports available.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:12",
+      "line": "[TRANSPORT] Transport aborted: no Arduino connection available.",
+      "level": "error"
+    },
+    {
+      "time": "2026-06-30T12:10:13",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  3s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:14",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  2s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  1s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Sequence gestart!",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] 0 robotarm job(s) uit 6 delivery(s). Hopper-deliveries aanwezig: True",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Geconverteerd robot job-bestand:",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] []",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Opgeslagen kopie: C:\\SMR\\programming\\user_interface\\data\\robot_jobs.json",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Geen robotarm-taken. SMA3-stap wordt overgeslagen.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Start advance (wacht op S0)...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Inverter openen op COM5 ...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:15",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Arduino openen op COM7 ...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:18",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Band loopt op 3.60 Hz (armed=True), wachten op doos op S0...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:20",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Doos gedetecteerd op S0 (f_out=3.60 Hz).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:20",
+      "line": "[MAIN_CONTROL] [CONVEYOR] stopped (box detected)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:20",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Comms: ok=5  retried=0  failed=0",
+      "level": "error"
+    },
+    {
+      "time": "2026-06-30T12:10:20",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Klaar.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:20",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Doos op row 4. Start hopper-sequence.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:20",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] COM-poorten 1.0s laten rusten ...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start hopper-sequence: main_control_hoppers_v3.py",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL] ============================================================",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL] Sequence written to hopper_sequence.txt",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL] Total hopper commands: 6",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL]  1. buf A4  S-1 (id=1)  count=2  --  Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL]  2. buf B4  W-1 (id=16)  count=5  --  Washer 10,5x4/25 FLT-ST-ZPS",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL]  3. buf B3  S-1 (id=1)  count=2  --  Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL]  4. buf C2  S-2 (id=2)  count=8  --  Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL]  5. buf A1  S-1 (id=1)  count=2  --  Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL]  6. buf A1  S-2 (id=2)  count=2  --  Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:21",
+      "line": "[MAIN_CONTROL] Controls: s = skip current step, q = quit sequence",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] Combined controller v3 ready (4 box sensors + 14 servo hoppers + 10 stepper-washer hoppers + Y-as)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] S0:1",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] S1:0",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] S2:0",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] S3:0",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] Y-as init -> A (PCA9685 board 0, ch 15)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] All gates forced to 0 deg",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:23",
+      "line": "[MAIN_CONTROL] Washer steppers initialised (10x TB6600)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:24",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Snelheid ingesteld op 3.60 Hz",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:24",
+      "line": "[MAIN_CONTROL] >> yas(a)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:24",
+      "line": "[MAIN_CONTROL] << Y-as -> A (0 deg)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:24",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:24",
+      "line": "[MAIN_CONTROL] --- step 1/6  buf A4  S-1 (id=1)  count=2 ---",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:24",
+      "line": "[MAIN_CONTROL] >> hopper(1,2)   (press 's'=skip, 'q'=quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:24",
+      "line": "[MAIN_CONTROL] << Dispensing 2 from hopper 1",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:25",
+      "line": "[MAIN_CONTROL] << Gate CLOSED hopper 1",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:25",
+      "line": "[MAIN_CONTROL] << Gate CLOSED hopper 2",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:25",
+      "line": "[MAIN_CONTROL] << Gate CLOSED hopper 9",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:35",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:35",
+      "line": "[MAIN_CONTROL] .. settle 5.00s (laat korrels vallen)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:40",
+      "line": "[MAIN_CONTROL] .. delay 2.0s (press 's' to skip, 'q' to quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:42",
+      "line": "[MAIN_CONTROL] >> yas(b)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:42",
+      "line": "[MAIN_CONTROL] << Y-as -> B (90 deg)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:43",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:43",
+      "line": "[MAIN_CONTROL] --- step 2/6  buf B4  W-1 (id=16)  count=5 ---",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:43",
+      "line": "[MAIN_CONTROL] >> hopper(16,5)   (press 's'=skip, 'q'=quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:43",
+      "line": "[MAIN_CONTROL] << Dispensing 5 washers from hopper 16 (W-2, stepDelay=400us)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:46",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:46",
+      "line": "[MAIN_CONTROL] .. settle 5.00s (laat korrels vallen)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:51",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Doorschuiven naar row 3 (wacht op S1)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:51",
+      "line": "[MAIN_CONTROL] [CONVEYOR] START",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:52",
+      "line": "[MAIN_CONTROL] [CONVEYOR] STOP",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:52",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Row 3 bereikt (S1 HIGH).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:52",
+      "line": "[MAIN_CONTROL] .. delay 2.0s (press 's' to skip, 'q' to quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:54",
+      "line": "[MAIN_CONTROL] --- step 3/6  buf B3  S-1 (id=1)  count=2 ---",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:54",
+      "line": "[MAIN_CONTROL] >> hopper(1,2)   (press 's'=skip, 'q'=quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:10:54",
+      "line": "[MAIN_CONTROL] << Dispensing 2 from hopper 1",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:05",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:05",
+      "line": "[MAIN_CONTROL] .. settle 5.00s (laat korrels vallen)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:10",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Doorschuiven naar row 2 (wacht op S2)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:11",
+      "line": "[MAIN_CONTROL] [CONVEYOR] START",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:12",
+      "line": "[MAIN_CONTROL] [CONVEYOR] STOP",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:12",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Row 2 bereikt (S2 HIGH).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:12",
+      "line": "[MAIN_CONTROL] .. delay 2.0s (press 's' to skip, 'q' to quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:14",
+      "line": "[MAIN_CONTROL] >> yas(c)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:14",
+      "line": "[MAIN_CONTROL] << Y-as -> C (180 deg)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:14",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:14",
+      "line": "[MAIN_CONTROL] --- step 4/6  buf C2  S-2 (id=2)  count=8 ---",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:14",
+      "line": "[MAIN_CONTROL] >> hopper(2,8)   (press 's'=skip, 'q'=quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:14",
+      "line": "[MAIN_CONTROL] << Dispensing 8 from hopper 2",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:59",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:11:59",
+      "line": "[MAIN_CONTROL] .. settle 5.00s (laat korrels vallen)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:04",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Doorschuiven naar row 1 (wacht op S3)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:05",
+      "line": "[MAIN_CONTROL] [CONVEYOR] START",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:06",
+      "line": "[MAIN_CONTROL] [CONVEYOR] STOP",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:06",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Row 1 bereikt (S3 HIGH).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:06",
+      "line": "[MAIN_CONTROL] .. delay 2.0s (press 's' to skip, 'q' to quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:08",
+      "line": "[MAIN_CONTROL] >> yas(a)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:08",
+      "line": "[MAIN_CONTROL] << Y-as -> A (0 deg)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:09",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:09",
+      "line": "[MAIN_CONTROL] --- step 5/6  buf A1  S-1 (id=1)  count=2 ---",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:09",
+      "line": "[MAIN_CONTROL] >> hopper(1,2)   (press 's'=skip, 'q'=quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:09",
+      "line": "[MAIN_CONTROL] << Dispensing 2 from hopper 1",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:20",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:20",
+      "line": "[MAIN_CONTROL] .. settle 5.00s (laat korrels vallen)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:25",
+      "line": "[MAIN_CONTROL] .. delay 2.0s (press 's' to skip, 'q' to quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:27",
+      "line": "[MAIN_CONTROL] --- step 6/6  buf A1  S-2 (id=2)  count=2 ---",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:27",
+      "line": "[MAIN_CONTROL] >> hopper(2,2)   (press 's'=skip, 'q'=quit)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:27",
+      "line": "[MAIN_CONTROL] << Dispensing 2 from hopper 2",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:39",
+      "line": "[MAIN_CONTROL] << DONE",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:39",
+      "line": "[MAIN_CONTROL] .. settle 5.00s (laat korrels vallen)",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:44",
+      "line": "[MAIN_CONTROL] [BOX] Alle rijen gevuld -- box uitvoeren ...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:44",
+      "line": "[MAIN_CONTROL] [CONVEYOR] Eject 5.0s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:44",
+      "line": "[MAIN_CONTROL] [CONVEYOR] START",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] [CONVEYOR] STOP",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] [CONVEYOR] STOP",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] =========== summary ===========",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] Total steps   : 6",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] Skipped/failed: 0",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] Sequence finished.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] ============================================================",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Hopper-sequence klaar (exit code 0).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:12:49",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Alles klaar.",
+      "level": "info"
+    }
+  ],
+  "updatedAt": "2026-06-30T12:12:49"
+}

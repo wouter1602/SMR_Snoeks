@@ -1,0 +1,3033 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pick &amp; Place Automotive</title>
+  <style>
+    :root{
+      --bg:#0f0f0f;--s1:#171717;--s2:#1f1f1f;--s3:#272727;--s4:#101010;
+      --border:#303030;--border2:#3a3a3a;--accent:#dd0a13;--accent-l:#ff2630;
+      --text:#f0f0f0;--text2:#aaa;--text3:#666;--ok:#16a34a;--err:#dc2626;
+      --font:system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Courier New",monospace;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font)}
+    button,input,select{font-family:var(--font)}
+    button{cursor:pointer}
+    .hidden{display:none!important}
+    #app{min-height:100vh;display:flex;flex-direction:column}
+    .view{display:none;flex:1;flex-direction:column}
+    .view.active{display:flex}
+    .topbar{display:flex;align-items:center;gap:16px;padding:0 24px;height:60px;background:var(--s1);border-bottom:2px solid var(--accent)}
+    .topbar-logo{display:flex;align-items:center;flex-shrink:0}
+    .topbar-logo img{display:block;height:34px;width:auto;object-fit:contain}
+    .topbar-title{font-size:.8rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--text2)}
+    .topbar-right{margin-left:auto;font-size:.68rem;color:var(--text3);font-family:var(--mono)}
+    .lang-select{background:var(--s2);border:1px solid var(--border);border-radius:4px;color:var(--text2);padding:8px 10px;font-size:.74rem}
+    .content{flex:1;overflow-y:auto;padding:32px 24px}
+    .btn-back,.btn-ghost,.btn-danger,.btn-add,.btn-save,.btn-start,.btn-delete{border-radius:4px;font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;transition:.15s}
+    .btn-back,.btn-ghost,.btn-delete,.btn-danger,.btn-add{background:transparent;border:1px solid var(--border2);color:var(--text2);padding:10px 14px}
+    .btn-back:hover,.btn-ghost:hover,.btn-delete:hover,.btn-add:hover{border-color:var(--accent);color:var(--accent)}
+    .btn-danger{border-color:#5a1b1b;color:#fca5a5}
+    .btn-danger:hover{border-color:var(--err);color:#fff;background:#3b1010}
+    .btn-save,.btn-start{background:var(--accent);border:none;color:#fff;padding:14px 22px}
+    .btn-save:hover,.btn-start:hover{background:var(--accent-l)}
+    .btn-add:disabled{opacity:.4;cursor:not-allowed}
+    .home-header{text-align:center;margin-bottom:48px}
+    .home-header h1{font-size:1.8rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+    .home-header p{color:var(--text2);font-size:.85rem;margin-top:8px}
+    .home-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;max-width:920px;margin:0 auto}
+    .home-card{background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:32px;cursor:pointer;display:flex;flex-direction:column;gap:14px;transition:.2s}
+    .home-card:hover{border-color:var(--accent);background:var(--s2);transform:translateY(-2px)}
+    .home-card h2{font-size:1.05rem;letter-spacing:.06em;text-transform:uppercase}
+    .home-card p{font-size:.82rem;color:var(--text2);line-height:1.6}
+    .home-card-arrow{margin-top:auto;color:var(--accent);font-size:.75rem}
+    .section-label{font-size:.68rem;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--text3);margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+    .stack{display:flex;flex-direction:column;gap:24px;max-width:1100px}
+    .panel{background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:24px}
+    .panel-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+    .panel-title{font-size:.82rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+    .field-label{display:block;font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--text2);margin-bottom:8px}
+    .field-input{width:100%;background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:12px 16px;color:var(--text);font-size:.92rem;outline:none}
+    .field-input:focus{border-color:var(--accent)}
+    .field-input::placeholder{color:var(--text3)}
+    .field-err{min-height:18px;color:#fca5a5;font-size:.76rem;margin-top:6px}
+    .form-row{display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:end}
+    .slot-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .slot-row-label{grid-column:1/-1;font-size:.66rem;color:var(--text3);letter-spacing:.12em;text-transform:uppercase;margin-top:8px}
+    .slot-cell{background:var(--s2);border:2px solid var(--border);border-radius:6px;min-height:120px;padding:16px;cursor:pointer;display:flex;flex-direction:column;gap:8px;position:relative;transition:.15s}
+    .slot-cell:hover{border-color:var(--accent);background:var(--s3)}
+    .slot-cell.configured{border-color:#334155}
+    .slot-id{font-family:var(--mono);font-size:.72rem;font-weight:700;letter-spacing:.12em;color:var(--text3)}
+    .slot-status-dot{width:8px;height:8px;border-radius:50%;background:var(--border2);position:absolute;top:14px;right:14px}
+    .slot-cell.configured .slot-status-dot{background:var(--ok)}
+    .slot-empty-hint{font-size:.75rem;color:var(--text3);margin-top:auto}
+    .slot-info{display:flex;flex-direction:column;gap:4px;margin-top:auto}
+    .slot-parts-count{font-size:.78rem;font-weight:600}
+    .slot-qty-total{font-size:.7rem;color:var(--text2);font-family:var(--mono)}
+    .slot-add-hint{position:absolute;bottom:14px;right:14px;font-size:1.4rem;color:var(--border2)}
+    .slot-cell:hover .slot-add-hint{color:var(--accent)}
+    .qty-control{display:flex;align-items:center}
+    .qty-btn{width:48px;height:48px;background:var(--s2);border:1px solid var(--border);color:var(--text2);font-size:1.2rem}
+    .qty-btn:first-child{border-radius:4px 0 0 4px}
+    .qty-btn:last-child{border-radius:0 4px 4px 0}
+    .qty-btn:hover{background:var(--s3);color:var(--text)}
+    .qty-input{width:100px;height:48px;background:var(--s2);border:1px solid var(--border);border-left:none;border-right:none;color:var(--text);text-align:center;font-size:1rem;font-family:var(--mono);outline:none}
+    .quick-actions{display:flex;gap:10px;flex-wrap:wrap}
+    .import-panel{display:grid;grid-template-columns:minmax(240px,1fr) minmax(180px,260px) auto;gap:14px;align-items:end}
+    .import-summary{margin-top:14px;display:flex;gap:12px;flex-wrap:wrap;color:var(--text2);font-size:.76rem}
+    .import-summary strong{color:var(--text)}
+    .import-part-preview{margin-top:14px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;max-height:170px;overflow:auto}
+    .import-part-chip{background:var(--s4);border:1px solid var(--border);border-radius:6px;padding:9px 10px;min-width:0}
+    .import-part-chip-name{font-size:.76rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .import-part-chip-meta{font-size:.66rem;color:var(--text3);font-family:var(--mono);margin-top:3px}
+    .batch-list{display:flex;flex-direction:column;gap:12px}
+    .batch-card{background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:20px 24px;display:flex;align-items:center;gap:24px}
+    .batch-card-info{flex:1}
+    .batch-card-name{font-size:1rem;font-weight:700;margin-bottom:6px}
+    .batch-card-meta{display:flex;gap:20px;flex-wrap:wrap}
+    .batch-meta-item{font-size:.72rem;color:var(--text2)}
+    .batch-meta-item strong{color:var(--text)}
+    .batch-card-actions{display:flex;gap:10px}
+    .batch-empty,.empty-state{border:1px dashed var(--border);border-radius:6px;padding:32px 24px;color:var(--text3);text-align:center}
+    .modal.startup-modal{width:min(96vw,1680px);max-width:min(96vw,1680px);max-height:96vh}
+    .startup-layout{display:grid;grid-template-columns:1.65fr .95fr;gap:20px}
+    .startup-hero{background:linear-gradient(135deg,#240507,#121212 58%,#1b1b1b 100%);border:1px solid var(--border);border-radius:10px;padding:22px}
+    .startup-hero h3{font-size:1.2rem;letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px}
+    .startup-hero p{color:var(--text2);line-height:1.6;font-size:.86rem}
+    .startup-pill-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    .startup-pill{border:1px solid var(--border2);border-radius:999px;padding:8px 12px;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;background:rgba(255,255,255,.03)}
+    .startup-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+    .hopper-group{background:var(--s4);border:1px solid var(--border);border-radius:10px;padding:16px}
+    .hopper-group-title{font-size:.76rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px}
+    .hopper-lines{display:flex;flex-direction:column;gap:8px}
+    .hopper-line{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:10px 12px}
+    .hopper-line.clickable{cursor:pointer;transition:.15s}
+    .hopper-line.clickable:hover,.hopper-line.selected{border-color:var(--accent);background:var(--s3)}
+    .hopper-line.started{border-color:var(--ok)}
+    .hopper-id{font-family:var(--mono);font-size:.74rem;color:var(--accent);min-width:52px}
+    .hopper-part{display:flex;flex:1;flex-direction:column;align-items:flex-end;gap:4px;min-width:0;text-align:right;color:var(--text2)}
+    .hopper-part-name{font-size:.78rem;font-weight:600;color:var(--text)}
+    .hopper-part-meta{font-size:.68rem;color:var(--text3);font-family:var(--mono)}
+    .hopper-part-empty{font-size:.76rem;color:var(--text3)}
+    .startup-side{display:flex;flex-direction:column;gap:16px}
+    .startup-checklist,.startup-warning{background:var(--s4);border:1px solid var(--border);border-radius:10px;padding:18px}
+    .startup-checklist h4,.startup-warning h4{font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px}
+    .startup-checklist ul,.startup-warning ul{list-style:none;display:flex;flex-direction:column;gap:8px;color:var(--text2);font-size:.8rem}
+    .startup-warning{border-color:#5a1b1b;background:#1b1010}
+    .startup-warning strong{color:#fca5a5}
+    .machine-mode-switch{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
+    .mode-btn{background:transparent;border:1px solid var(--border2);color:var(--text2);padding:10px 14px;border-radius:999px;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    .mode-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+    .parts-capabilities{display:flex;flex-wrap:wrap;gap:8px}
+    .capability-pill{border:1px solid var(--border2);border-radius:999px;padding:6px 10px;font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text2)}
+    .capability-pill.active{border-color:var(--accent);color:#fff;background:rgba(221,10,19,.18)}
+    .capability-pill.robotarm{border-color:#5a1b1b;color:#fca5a5}
+    .startup-assignment-panel{background:var(--s4);border:1px solid var(--border);border-radius:10px;padding:18px}
+    .startup-assignment-list{display:flex;flex-direction:column;gap:10px;max-height:340px;overflow:auto}
+    .assignable-item{background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer;transition:.15s}
+    .assignable-item.selected{border-color:var(--accent);background:var(--s3)}
+    .assignable-name{font-size:.8rem;font-weight:600}
+    .assignable-meta{font-size:.7rem;color:var(--text3);font-family:var(--mono);margin-top:4px}
+    .assignable-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .startup-inline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .option-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .option-check{display:flex;gap:10px;align-items:flex-start;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;transition:.15s}
+    .option-check:hover{border-color:var(--accent)}
+    .option-check input[type="checkbox"]{appearance:none;-webkit-appearance:none;width:18px;height:18px;margin-top:2px;border:1px solid var(--border2);border-radius:5px;background:var(--s3);position:relative;flex-shrink:0;transition:.15s}
+    .option-check input[type="checkbox"]::after{content:"";position:absolute;left:5px;top:1px;width:4px;height:9px;border-right:2px solid transparent;border-bottom:2px solid transparent;transform:rotate(45deg)}
+    .option-check input[type="checkbox"]:hover{border-color:var(--accent)}
+    .option-check input[type="checkbox"]:focus-visible{outline:2px solid rgba(221,10,19,.4);outline-offset:2px}
+    .option-check input[type="checkbox"]:checked{background:rgba(221,10,19,.18);border-color:var(--accent)}
+    .option-check input[type="checkbox"]:checked::after{border-color:#fff}
+    .subtle-note{font-size:.72rem;color:var(--text3);line-height:1.5}
+    .parts-admin{display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:20px}
+    .parts-form{display:flex;flex-direction:column;gap:14px}
+    .part-form-actions{display:flex;gap:10px;flex-wrap:wrap}
+    .parts-list-header{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:16px;margin-bottom:14px}
+    .parts-search{min-width:min(100%,320px)}
+    .parts-table{display:flex;flex-direction:column;gap:8px;max-height:520px;overflow:auto;padding-right:4px}
+    .part-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--s4);border:1px solid var(--border);border-radius:6px;padding:12px 14px}
+    .part-name{font-size:.86rem;font-weight:600}
+    .part-article{font-size:.72rem;color:var(--text3);font-family:var(--mono);margin-top:3px}
+    .part-secondary{font-size:.72rem;color:var(--text2);margin-top:6px}
+    .part-row-actions{display:flex;gap:8px;flex-shrink:0}
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:flex-end;justify-content:center;z-index:200}
+    .modal{background:var(--s1);border:1px solid var(--border);border-top:2px solid var(--accent);border-radius:8px 8px 0 0;width:100%;max-width:680px;max-height:90vh;display:flex;flex-direction:column}
+    .modal-header{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--border)}
+    .modal-title{font-size:.8rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+    .modal-subtitle{font-size:.68rem;color:var(--text3);margin-top:2px}
+    .btn-close{width:36px;height:36px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text2);font-size:1.1rem}
+    .btn-close:hover{border-color:var(--accent);color:var(--accent)}
+    .modal-body{flex:1;overflow-y:auto;padding:24px}
+    .modal-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px}
+    .part-dropdown{background:var(--s2);border:1px solid var(--border);border-radius:4px;max-height:200px;overflow-y:auto;margin-bottom:16px}
+    .part-option{padding:11px 16px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+    .part-option:last-child{border-bottom:none}
+    .part-option:hover,.part-option.selected{background:var(--s3)}
+    .part-option.selected{border-left:2px solid var(--accent)}
+    .part-option-name{font-size:.83rem;font-weight:500}
+    .part-option-art{font-size:.68rem;color:var(--text3);font-family:var(--mono)}
+    .part-option-check{color:var(--accent);font-size:.75rem;font-weight:700}
+    .add-row{display:flex;align-items:end;gap:12px;margin-bottom:24px;flex-wrap:wrap}
+    .slot-parts-label{display:flex;align-items:center;gap:12px;font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:12px}
+    .slot-parts-label::after{content:"";flex:1;height:1px;background:var(--border)}
+    .slot-part-row{display:flex;align-items:center;gap:12px;background:var(--s4);border:1px solid var(--border);border-radius:6px;padding:10px 14px}
+    .slot-part-info{flex:1}
+    .slot-part-name{font-size:.82rem;font-weight:500}
+    .slot-part-art{font-size:.67rem;color:var(--text3);font-family:var(--mono);margin-top:1px}
+    .slot-part-qty{font-family:var(--mono);font-size:.82rem;font-weight:700;color:var(--text2)}
+    .control-shell{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr);gap:20px;max-width:1500px}
+    .control-hero{background:var(--s1);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:22px;display:flex;justify-content:space-between;gap:18px;align-items:flex-start}
+    .control-kicker{font-size:.68rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+    .control-title{font-size:1.25rem;font-weight:800;letter-spacing:.03em}
+    .control-subtitle{margin-top:8px;color:var(--text2);font-size:.82rem;line-height:1.5}
+    .control-status{display:flex;align-items:center;gap:10px;background:var(--s4);border:1px solid var(--border);border-radius:6px;padding:12px 14px;min-width:190px}
+    .status-dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(22,163,74,.14)}
+    .status-dot.paused{background:#eab308;box-shadow:0 0 0 4px rgba(234,179,8,.14)}
+    .status-dot.stopped{background:var(--err);box-shadow:0 0 0 4px rgba(220,38,38,.14)}
+    .control-status-text{font-size:.78rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+    .control-status-sub{font-size:.68rem;color:var(--text3);font-family:var(--mono);margin-top:2px}
+    .control-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+    .metric-box{background:var(--s4);border:1px solid var(--border);border-radius:6px;padding:14px}
+    .metric-label{font-size:.64rem;color:var(--text3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:7px}
+    .metric-value{font-size:1.18rem;font-weight:800;font-family:var(--mono)}
+    .progress-track{height:10px;background:var(--s4);border:1px solid var(--border);border-radius:999px;overflow:hidden}
+    .progress-fill{height:100%;background:var(--accent);width:0%;transition:width .25s}
+    .control-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    .live-process{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-top:16px}
+    .live-box{background:var(--s4);border:1px solid var(--border);border-radius:6px;padding:14px;min-width:0}
+    .live-label{font-size:.64rem;color:var(--text3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}
+    .live-value{font-size:.84rem;font-weight:800;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .live-sub{font-family:var(--mono);font-size:.68rem;color:var(--text2);line-height:1.45;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .live-box.error{border-color:#5a1b1b;background:#1b1010}
+    .live-box.error .live-value{color:#fca5a5}
+    .control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
+    #control-hopper-list{display:block}
+    .control-card{background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:16px;min-width:0}
+    .control-card.done{border-color:rgba(22,163,74,.7)}
+    .control-card.active{border-color:var(--accent);background:var(--s2)}
+    .control-card.fail{border-color:#5a1b1b;background:#1b1010}
+    .control-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
+    .control-card-title{font-size:.82rem;font-weight:800}
+    .control-card-tag{font-family:var(--mono);font-size:.68rem;color:var(--accent)}
+    .control-card-meta{font-size:.7rem;color:var(--text3);font-family:var(--mono);line-height:1.5}
+    .control-card-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .arduino-board{display:flex;flex-direction:column;gap:18px;margin-top:16px}
+    .arduino-board-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+    .arduino-board-title-main{font-size:.78rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+    .arduino-board-title-sub{font-family:var(--mono);font-size:.68rem;color:var(--text3)}
+    .arduino-slot-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .arduino-slot{background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:12px;min-height:132px;display:flex;flex-direction:column;gap:8px}
+    .arduino-slot.waiting{border-color:#3a3a3a}
+    .arduino-slot.active{border-color:var(--accent);background:var(--s2)}
+    .arduino-slot.done{border-color:rgba(22,163,74,.75)}
+    .arduino-slot.failed{border-color:#5a1b1b;background:#1b1010}
+    .arduino-slot.empty{opacity:.58}
+    .arduino-slot-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .arduino-slot-number{font-family:var(--mono);font-size:.86rem;font-weight:800;color:var(--text)}
+    .arduino-slot-state{font-size:.62rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)}
+    .arduino-slot.active .arduino-slot-state{color:var(--accent)}
+    .arduino-slot.done .arduino-slot-state{color:var(--ok)}
+    .arduino-slot.failed .arduino-slot-state{color:#fca5a5}
+    .arduino-slot-body{font-size:.7rem;color:var(--text2);line-height:1.45;min-height:42px}
+    .arduino-slot-body strong{display:block;color:var(--text);font-size:.76rem;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .control-side{display:flex;flex-direction:column;gap:16px}
+    .control-panel{background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:18px}
+    .control-list{display:flex;flex-direction:column;gap:8px;margin-top:12px;max-height:280px;overflow:auto}
+    .control-list-row{display:flex;justify-content:space-between;gap:12px;background:var(--s4);border:1px solid var(--border);border-radius:6px;padding:10px 12px}
+    .control-list-main{font-size:.76rem;font-weight:600}
+    .control-list-sub{font-size:.68rem;color:var(--text3);font-family:var(--mono);margin-top:2px}
+    .transport-log{font-family:var(--mono);font-size:.68rem;line-height:1.45;max-height:330px;overflow:auto;background:var(--s4);border:1px solid var(--border);border-radius:6px;margin-top:12px;padding:10px}
+    .transport-log-line{padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);color:var(--text2);white-space:pre-wrap;word-break:break-word}
+    .transport-log-line:last-child{border-bottom:none}
+    .transport-log-line.error{color:#fca5a5}
+    .transport-message{margin-top:10px;font-family:var(--mono);font-size:.72rem;color:var(--text2)}
+    .control-note{width:100%;min-height:88px;resize:vertical;background:var(--s2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:12px;font-size:.82rem;outline:none}
+    .control-note:focus{border-color:var(--accent)}
+    .toast{position:fixed;bottom:22px;right:22px;background:var(--s1);border:1px solid var(--accent);border-radius:8px;padding:11px 16px;font-size:.78rem;color:var(--text);z-index:300;opacity:0;pointer-events:none;transition:opacity .2s}
+    .toast.show{opacity:1}
+    .toast.err{border-color:var(--err)}
+    @media (max-width: 900px){
+      .home-cards,.form-row,.parts-admin{grid-template-columns:1fr}
+      .import-panel,.import-part-preview{grid-template-columns:1fr}
+      .slot-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .startup-layout,.startup-grid{grid-template-columns:1fr}
+      .control-shell,.control-grid,.control-metrics,.live-process{grid-template-columns:1fr}
+      .control-hero{flex-direction:column}
+    }
+  </style>
+</head>
+<body>
+<div
+  id="app"
+  data-slot-rows='{{ slot_rows | tojson | safe }}'
+  data-slot-columns='{{ slot_columns | tojson | safe }}'
+  data-slot-ids='{{ slots | tojson | safe }}'
+>
+  <div class="view active" id="view-home">
+    <div class="topbar">
+      <div class="topbar-logo">
+        <img src="{{ url_for('static', filename='Main logo - Snoeks Automotive.png') }}" alt="Snoeks Automotive" />
+      </div>
+      <select id="language-select" class="lang-select" onchange="setLanguage(this.value)">
+        <option value="nl">Nederlands</option>
+        <option value="en">English</option>
+        <option value="cs">Cestina</option>
+        <option value="tr">Turkce</option>
+      </select>
+      <div class="topbar-right" id="clock"></div>
+    </div>
+    <div class="content">
+      <div class="home-header">
+        <h1 data-i18n="home.title">Batch Configuratie</h1>
+        <p data-i18n="home.subtitle">Beheer onderdelen, maak batches aan en wijs onderdelen toe aan 12 vakken.</p>
+      </div>
+      <div class="home-cards">
+        <div class="home-card" onclick="showView('batch-list')">
+          <h2 data-i18n="home.saved.title">Opgeslagen batches</h2>
+          <p data-i18n="home.saved.body">Bekijk bestaande batches en start of verwijder ze wanneer nodig.</p>
+          <div class="home-card-arrow" data-i18n="home.saved.cta">Open overzicht</div>
+        </div>
+        <div class="home-card" onclick="newBatchInit()">
+          <h2 data-i18n="home.new.title">Nieuwe batch</h2>
+          <p data-i18n="home.new.body">Stel een nieuwe batch samen en vul een 3 x 4 raster met onderdelen.</p>
+          <div class="home-card-arrow" data-i18n="home.new.cta">Batch maken</div>
+        </div>
+        <div class="home-card" onclick="showPartsAdmin()">
+          <h2 data-i18n="home.parts.title">Onderdelen beheren</h2>
+          <p data-i18n="home.parts.body">Voeg nieuwe parts toe en houd het onderdelenoverzicht bij buiten de code.</p>
+          <div class="home-card-arrow" data-i18n="home.parts.cta">Onderdelen openen</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-batch-list">
+    <div class="topbar">
+      <button class="btn-back" onclick="showView('home')" data-i18n="common.back">Terug</button>
+      <div class="topbar-title" data-i18n="batchList.title">Batches</div>
+      <div class="topbar-right" id="clock2"></div>
+    </div>
+    <div class="content">
+      <div class="section-label" data-i18n="batchList.section">Opgeslagen batches</div>
+      <div id="batch-list-container" class="batch-list"></div>
+    </div>
+  </div>
+
+  <div class="view" id="view-parts-admin">
+    <div class="topbar">
+      <button class="btn-back" onclick="goBackFromPartsAdmin()" data-i18n="common.back">Terug</button>
+      <div class="topbar-title" data-i18n="partsAdmin.topbar">Onderdelen Beheer</div>
+      <div class="topbar-right" id="clock3"></div>
+    </div>
+    <div class="content">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title" id="parts-admin-form-title">Parts Toevoegen</div>
+          </div>
+          <div class="parts-admin">
+            <div class="parts-form">
+              <div>
+                <label class="field-label" data-i18n="partsAdmin.name">Naam onderdeel</label>
+                <input class="field-input" id="new-part-name" data-i18n-placeholder="partsAdmin.namePlaceholder" placeholder="Bijv. Bout M10 x 30mm" />
+              </div>
+              <div>
+                <label class="field-label" data-i18n="partsAdmin.article">Artikelnummer</label>
+                <input class="field-input" id="new-part-article" data-i18n-placeholder="partsAdmin.articlePlaceholder" placeholder="Bijv. BT-M10-030" />
+              </div>
+              <div>
+                <label class="field-label" data-i18n="partsAdmin.weight">Gewicht (gram)</label>
+                <input class="field-input" id="new-part-weight" type="number" min="0" step="0.01" data-i18n-placeholder="partsAdmin.weightPlaceholder" placeholder="Bijv. 12.5" />
+              </div>
+              <div>
+                <label class="field-label">Verwerking</label>
+                <select class="field-input" id="new-part-handling" onchange="togglePartCapabilityInputs()">
+                  <option value="hopper">Via hopper</option>
+                  <option value="robotarm">Via robotarm</option>
+                </select>
+              </div>
+              <div id="part-hopper-options">
+                <label class="field-label">Toegestane hoppertypes</label>
+                <div class="option-grid">
+                  <label class="option-check"><input type="checkbox" value="smallBolts" class="hopper-type-checkbox" checked /> <span>Kleine bout hoppers</span></label>
+                  <label class="option-check"><input type="checkbox" value="mediumBolts" class="hopper-type-checkbox" /> <span>Medium bout hoppers</span></label>
+                  <label class="option-check"><input type="checkbox" value="largeBolts" class="hopper-type-checkbox" /> <span>Grote bout hoppers</span></label>
+                  <label class="option-check"><input type="checkbox" value="washers" class="hopper-type-checkbox" /> <span>Washer hoppers</span></label>
+                </div>
+                <div class="subtle-note" style="margin-top:8px;">Geef hier aan in welk soort hoppers dit onderdeel fysiek geplaatst mag worden.</div>
+              </div>
+              <div class="field-err" id="parts-admin-error"></div>
+              <div class="part-form-actions">
+                <button class="btn-save" type="button" id="part-form-submit" onclick="submitPartForm()">Onderdeel toevoegen</button>
+                <button class="btn-back hidden" type="button" id="part-form-cancel" onclick="resetPartForm()" data-i18n="common.cancel">Annuleer</button>
+              </div>
+            </div>
+            <div>
+              <div class="parts-list-header">
+                <div class="panel-title" data-i18n="partsAdmin.listTitle">Bestaande parts</div>
+                <div class="parts-search">
+                  <label class="field-label" data-i18n="partsAdmin.search">Zoeken</label>
+                  <input class="field-input" id="parts-admin-search" data-i18n-placeholder="partsAdmin.searchPlaceholder" placeholder="Zoek op naam of artikelnummer..." oninput="filterPartsAdminList()" />
+                </div>
+              </div>
+              <div id="parts-admin-list" class="parts-table"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-new-batch">
+    <div class="topbar">
+      <button class="btn-back" onclick="showView('home')" data-i18n="common.back">Terug</button>
+      <div class="topbar-title" id="new-batch-title" data-i18n="newBatch.topbar">Nieuwe Batch</div>
+      <div class="topbar-right" id="clock4"></div>
+    </div>
+    <div class="content">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title" data-i18n="newBatch.details">Batch Gegevens</div>
+            <button class="btn-ghost" onclick="showPartsAdmin()" data-i18n="newBatch.manageParts">Beheer parts</button>
+          </div>
+          <div class="form-row">
+            <div>
+              <label class="field-label" data-i18n="newBatch.name">Batchnaam</label>
+              <input class="field-input" id="batch-name" data-i18n-placeholder="newBatch.namePlaceholder" placeholder="Bijv. Ford 2026 deurset" />
+              <div class="field-err" id="err-name"></div>
+            </div>
+            <div>
+              <label class="field-label" data-i18n="newBatch.size">Batchgrootte</label>
+              <div class="qty-control">
+                <button class="qty-btn" type="button" onclick="adjustBatchSize(-100)">-</button>
+                <input class="qty-input" id="batch-size" type="number" min="1" value="100" />
+                <button class="qty-btn" type="button" onclick="adjustBatchSize(100)">+</button>
+              </div>
+              <div class="quick-actions" style="margin-top:10px;">
+                <button class="btn-back" type="button" onclick="setBatchSize(100)">100 st</button>
+                <button class="btn-back" type="button" onclick="setBatchSize(500)">500 st</button>
+                <button class="btn-back" type="button" onclick="setBatchSize(1000)">1000 st</button>
+              </div>
+              <div class="field-err" id="err-size"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title" data-i18n="import.title">CSV import</div>
+          </div>
+          <div class="import-panel">
+            <div>
+              <label class="field-label" data-i18n="import.file">CSV bestand</label>
+              <input class="field-input" id="csv-import-file" type="file" accept=".csv,text/csv" onchange="previewCsvImport()" />
+            </div>
+            <div>
+              <label class="field-label" data-i18n="import.set">Set kiezen</label>
+              <select class="field-input" id="csv-set-select" onchange="selectCsvSet()" disabled>
+                <option value="" data-i18n="import.noSet">Nog geen CSV geladen</option>
+              </select>
+            </div>
+            <button class="btn-save" type="button" id="csv-apply-button" onclick="applyCsvImport()" disabled data-i18n="import.apply">Import toepassen</button>
+          </div>
+          <div class="field-err" id="err-import"></div>
+          <div id="csv-import-summary" class="import-summary"></div>
+          <div id="csv-import-preview" class="import-part-preview"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title" data-i18n="newBatch.gridTitle">Vakken Raster 3 x 4</div>
+          </div>
+          <div class="field-err" id="err-slots"></div>
+          <div id="slot-grid" class="slot-grid"></div>
+        </div>
+
+        <div>
+          <button class="btn-save" id="save-batch-button" onclick="saveBatch()" data-i18n="newBatch.save">Batch opslaan</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="slot-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="modal-slot-title">Vak A1 configureren</div>
+          <div class="modal-subtitle" id="modal-slot-sub">Voeg onderdelen toe aan dit vak</div>
+        </div>
+        <button class="btn-close" type="button" onclick="closeModal()">x</button>
+      </div>
+      <div class="modal-body">
+        <div>
+          <label class="field-label" data-i18n="modal.selectPart">Onderdeel selecteren</label>
+          <input id="part-search" class="field-input" data-i18n-placeholder="modal.searchPlaceholder" placeholder="Zoek op naam of artikelnummer..." oninput="filterParts()" />
+          <div class="part-dropdown" id="part-dropdown"></div>
+        </div>
+
+        <div class="add-row">
+          <div>
+            <label class="field-label" data-i18n="modal.quantity">Aantal</label>
+            <div class="qty-control">
+              <button class="qty-btn" type="button" onclick="adjustModalQty(-10)">-</button>
+              <input class="qty-input" id="modal-qty" type="number" min="1" value="50" />
+              <button class="qty-btn" type="button" onclick="adjustModalQty(10)">+</button>
+            </div>
+          </div>
+          <div>
+            <button class="btn-add" id="btn-add-part" type="button" onclick="addPartToSlot()" disabled data-i18n="modal.add">Toevoegen</button>
+          </div>
+        </div>
+
+        <div class="slot-parts-label" data-i18n="modal.partsInSlot">Onderdelen in dit vak</div>
+        <div id="slot-parts-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-back" type="button" style="flex:1;justify-content:center" onclick="closeModal()" data-i18n="common.cancel">Annuleer</button>
+        <button class="btn-save" type="button" style="flex:2" onclick="saveSlot()" data-i18n="modal.saveSlot">Vak opslaan</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="view-control">
+    <div class="topbar">
+      <button class="btn-back" onclick="leaveControlScreen()" data-i18n="common.back">Terug</button>
+      <div class="topbar-title" data-i18n="control.topbar">Batch control</div>
+      <div class="topbar-right" id="clock5"></div>
+    </div>
+    <div class="content">
+      <div class="control-shell">
+        <div>
+          <div class="control-hero">
+            <div>
+              <div class="control-kicker" data-i18n="control.kicker">Machine run</div>
+              <div class="control-title" id="control-batch-name" data-i18n="control.noActiveBatch">Geen batch actief</div>
+              <div class="control-subtitle" id="control-batch-summary" data-i18n="control.startPrompt">Start een batch om de machinecontrole te openen.</div>
+            </div>
+            <div class="control-status">
+              <div class="status-dot" id="control-status-dot"></div>
+              <div>
+                <div class="control-status-text" id="control-status-text">Stand-by</div>
+                <div class="control-status-sub" id="control-status-sub">PID -</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="control-metrics">
+            <div class="metric-box">
+              <div class="metric-label" data-i18n="control.progress">Batch progress</div>
+              <div class="metric-value" id="control-progress-value">0%</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label" data-i18n="control.steps">Stappen</div>
+              <div class="metric-value" id="control-hopper-count">0/0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label" data-i18n="control.robotarm">Robotarm</div>
+              <div class="metric-value" id="control-robot-count">0</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label" data-i18n="control.started">Started</div>
+              <div class="metric-value" id="control-start-time">--:--</div>
+            </div>
+          </div>
+
+          <div class="progress-track">
+            <div class="progress-fill" id="control-progress-fill"></div>
+          </div>
+
+          <div class="live-process">
+            <div class="live-box" id="live-phase-box">
+              <div class="live-label" data-i18n="control.livePhase">Live status</div>
+              <div class="live-value" id="control-live-phase">--</div>
+              <div class="live-sub" id="control-live-detail">--</div>
+            </div>
+            <div class="live-box" id="live-step-box">
+              <div class="live-label" data-i18n="control.liveStep">Actieve stap</div>
+              <div class="live-value" id="control-live-step">--</div>
+              <div class="live-sub" id="control-live-command">--</div>
+            </div>
+            <div class="live-box">
+              <div class="live-label" data-i18n="control.liveConveyor">Conveyor</div>
+              <div class="live-value" id="control-live-conveyor">--</div>
+              <div class="live-sub" id="control-live-sensor">--</div>
+            </div>
+            <div class="live-box">
+              <div class="live-label" data-i18n="control.liveLastLine">Laatste regel</div>
+              <div class="live-value" id="control-live-last-line">--</div>
+              <div class="live-sub" id="control-live-updated">--</div>
+            </div>
+          </div>
+
+          <div class="control-actions">
+            <button class="btn-save" type="button" onclick="toggleControlPause()" id="control-pause-button" data-i18n="control.pause">Scherm pauze</button>
+            <button class="btn-ghost" type="button" onclick="markCurrentStepDone()" data-i18n="control.markStepDone">Stap gereed</button>
+            <button class="btn-ghost" type="button" onclick="markAllStepsDone()" data-i18n="control.markAllDone">Alles gereed</button>
+            <button class="btn-danger" type="button" onclick="stopControlRun()" data-i18n="control.closeRun">Sluit run</button>
+          </div>
+
+          <div class="section-label" style="margin-top:22px;" data-i18n="control.hopperTasks">Hopper opdrachten</div>
+          <div class="control-grid" id="control-hopper-list"></div>
+        </div>
+
+        <div class="control-side">
+          <div class="control-panel">
+            <div class="panel-title" data-i18n="control.nextAction">Volgende actie</div>
+            <div class="control-list" id="control-next-action"></div>
+          </div>
+          <div class="control-panel">
+            <div class="panel-title" data-i18n="control.robotManual">Robotarm / handmatig</div>
+            <div class="control-list" id="control-robot-list"></div>
+          </div>
+          <div class="control-panel">
+            <div class="panel-title" data-i18n="control.operatorNote">Operator notitie</div>
+            <textarea class="control-note" id="control-note" data-i18n-placeholder="control.operatorNotePlaceholder" placeholder="Noteer storingen, bijvullen of afwijkingen..." oninput="saveControlNote()"></textarea>
+          </div>
+          <div class="control-panel">
+            <div class="panel-title" data-i18n="control.runFiles">Run bestanden</div>
+            <div class="control-list" id="control-run-files"></div>
+          </div>
+          <div class="control-panel">
+            <div class="panel-title" data-i18n="control.transportLog">Transport log</div>
+            <div class="transport-message" id="control-transport-message" data-i18n="control.waitingTransport">Wachten op transportstatus...</div>
+            <div class="transport-log" id="control-transport-log"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="startup-modal">
+    <div class="modal startup-modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="startup-title" data-i18n="startup.title">Batch opstartcontrole</div>
+          <div class="modal-subtitle" id="startup-subtitle" data-i18n="startup.subtitle">Controleer eerst de hopperbezetting en robotarm-instellingen.</div>
+        </div>
+        <button class="btn-close" type="button" onclick="closeStartupModal()">x</button>
+      </div>
+      <div class="modal-body">
+        <div class="startup-layout">
+          <div>
+            <div class="startup-hero">
+              <h3 id="startup-batch-name">Batch</h3>
+              <p id="startup-batch-summary"></p>
+              <div class="startup-pill-row" id="startup-pill-row"></div>
+            </div>
+            <div class="machine-mode-switch">
+              <button class="mode-btn active" type="button" id="mode-standard-btn" onclick="setStartupMode('standard')" data-i18n="startup.standardMode">Standaard vulmenu</button>
+              <button class="mode-btn" type="button" id="mode-manual-btn" onclick="setStartupMode('manual')" data-i18n="startup.manualMode">Zelf machine instellen</button>
+            </div>
+            <div class="startup-grid" id="startup-hopper-groups" style="margin-top:16px;"></div>
+          </div>
+          <div class="startup-side">
+            <div class="startup-assignment-panel" id="startup-assignment-panel">
+              <h4 data-i18n="startup.manualAssignment">Handmatige toewijzing</h4>
+              <div class="subtle-note" id="assignment-instruction" data-i18n="startup.assignmentDefault">Kies een modus. In handmatige modus klik je eerst een onderdeel en daarna een hopper.</div>
+              <div class="startup-assignment-list" id="assignable-part-list" style="margin-top:12px;"></div>
+              <div class="startup-inline-actions">
+                <button class="btn-save" type="button" onclick="startSelectedHopper()" data-i18n="startup.startHopper">Start hopper</button>
+                <button class="btn-back" type="button" onclick="clearSelectedAssignment()" data-i18n="startup.clearSelection">Selectie wissen</button>
+                <button class="btn-ghost" type="button" onclick="resetManualAssignments()" data-i18n="startup.resetManual">Handmatige indeling resetten</button>
+              </div>
+            </div>
+            <div class="startup-checklist">
+              <h4 data-i18n="startup.checklist">Opstart checklist</h4>
+              <ul id="startup-checklist"></ul>
+            </div>
+            <div class="startup-warning">
+              <h4 data-i18n="startup.robotLarge">Robotarm en grote delen</h4>
+              <ul id="startup-warning"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-back" type="button" style="flex:1" onclick="closeStartupModal()" data-i18n="common.cancel">Annuleer</button>
+        <button class="btn-save" type="button" style="flex:2" onclick="confirmStartBatch()" data-i18n="startup.confirmStart">Batch echt starten</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+const appRoot = document.getElementById("app");
+const SLOT_ROWS = JSON.parse(appRoot.dataset.slotRows || "[]");
+const SLOT_COLUMNS = JSON.parse(appRoot.dataset.slotColumns || "[]");
+const SLOT_IDS = JSON.parse(appRoot.dataset.slotIds || "[]");
+
+const I18N = {
+  nl: {
+    "nav.start": "Start",
+    "common.back": "Terug",
+    "common.cancel": "Annuleer",
+    "common.units": "st",
+    "common.pieces": "stuks",
+    "home.title": "Batch Configuratie",
+    "home.subtitle": "Beheer onderdelen, maak batches aan en wijs onderdelen toe aan 12 vakken.",
+    "home.saved.title": "Opgeslagen batches",
+    "home.saved.body": "Bekijk bestaande batches en start of verwijder ze wanneer nodig.",
+    "home.saved.cta": "Open overzicht",
+    "home.new.title": "Nieuwe batch",
+    "home.new.body": "Stel een nieuwe batch samen en vul een 3 x 4 raster met onderdelen.",
+    "home.new.cta": "Batch maken",
+    "home.parts.title": "Onderdelen beheren",
+    "home.parts.body": "Voeg nieuwe parts toe en houd het onderdelenoverzicht bij buiten de code.",
+    "home.parts.cta": "Onderdelen openen",
+    "batchList.title": "Batches",
+    "batchList.section": "Opgeslagen batches",
+    "batchList.empty": "Geen batches opgeslagen. Maak een nieuwe batch aan.",
+    "batchList.created": "Aangemaakt",
+    "batchList.parts": "Onderdelen",
+    "batchList.totalQty": "Totaal stuks",
+    "batchList.batchSize": "Batchgrootte",
+    "batchList.start": "Start batch",
+    "batchList.edit": "Bewerken",
+    "batchList.delete": "Verwijderen",
+    "partsAdmin.topbar": "Onderdelen Beheer",
+    "partsAdmin.addTitle": "Parts Toevoegen",
+    "partsAdmin.name": "Naam onderdeel",
+    "partsAdmin.article": "Artikelnummer",
+    "partsAdmin.weight": "Gewicht (gram)",
+    "partsAdmin.namePlaceholder": "Bijv. Bout M10 x 30mm",
+    "partsAdmin.articlePlaceholder": "Bijv. BT-M10-030",
+    "partsAdmin.weightPlaceholder": "Bijv. 12.5",
+    "partsAdmin.addButton": "Onderdeel toevoegen",
+    "partsAdmin.updateButton": "Wijzigingen opslaan",
+    "partsAdmin.editTitle": "Onderdeel bewerken",
+    "partsAdmin.listTitle": "Bestaande parts",
+    "partsAdmin.search": "Zoeken",
+    "partsAdmin.searchPlaceholder": "Zoek op naam, artikelnummer of gewicht...",
+    "partsAdmin.empty": "Nog geen onderdelen beschikbaar.",
+    "partsAdmin.noSearchResults": "Geen onderdelen gevonden voor deze zoekopdracht.",
+    "partsAdmin.edit": "Bewerk",
+    "partsAdmin.delete": "Verwijder",
+    "newBatch.topbar": "Nieuwe Batch",
+    "newBatch.details": "Batch Gegevens",
+    "newBatch.manageParts": "Beheer parts",
+    "newBatch.name": "Batchnaam",
+    "newBatch.size": "Batchgrootte",
+    "newBatch.namePlaceholder": "Bijv. Ford 2026 deurset",
+    "newBatch.gridTitle": "Vakken Raster 3 x 4",
+    "newBatch.save": "Batch opslaan",
+    "newBatch.update": "Batch bijwerken",
+    "newBatch.editing": "Batch bewerken",
+    "newBatch.row": "Rij",
+    "newBatch.partsSingular": "onderdeel",
+    "newBatch.partsPlural": "onderdelen",
+    "newBatch.totalUnits": "stuks totaal",
+    "newBatch.clickToConfigure": "Klik om te configureren",
+    "import.title": "CSV import",
+    "import.file": "CSV bestand",
+    "import.set": "Set kiezen",
+    "import.noSet": "Nog geen CSV geladen",
+    "import.apply": "Import toepassen",
+    "import.parts": "Onderdelen",
+    "import.totalPerSet": "Stuks per set",
+    "import.createdParts": "Nieuwe parts",
+    "import.updatedParts": "Bijgewerkt",
+    "import.selectFile": "Kies eerst een CSV-bestand.",
+    "import.selectSet": "Kies eerst een set.",
+    "import.loaded": "{count} set(s) gevonden in CSV.",
+    "import.applied": "CSV set {set} toegepast: {parts} parts, {qty} stuks.",
+    "modal.selectPart": "Onderdeel selecteren",
+    "modal.searchPlaceholder": "Zoek op naam of artikelnummer...",
+    "modal.quantity": "Aantal",
+    "modal.add": "Toevoegen",
+    "modal.partsInSlot": "Onderdelen in dit vak",
+    "modal.saveSlot": "Vak opslaan",
+    "modal.slotTitle": "Vak {slot} configureren",
+    "modal.slotSubtitle": "Voeg onderdelen toe aan dit vak",
+    "modal.noResults": "Geen resultaten",
+    "modal.emptySlot": "Nog geen onderdelen toegevoegd aan dit vak.",
+    "errors.batchNameRequired": "Batchnaam is verplicht.",
+    "errors.batchSizeRequired": "Batchgrootte moet minimaal 1 zijn.",
+    "errors.slotRequired": "Configureer minimaal 1 vak.",
+    "errors.minQuantity": "Aantal moet minimaal 1 zijn",
+    "toast.batchStarted": "Batch \"{name}\" gestart",
+    "toast.batchDeleted": "Batch verwijderd",
+    "toast.partAdded": "Onderdeel toegevoegd",
+    "toast.partUpdated": "Onderdeel bijgewerkt",
+    "toast.partDeleted": "Onderdeel verwijderd",
+    "toast.batchSaved": "Batch \"{name}\" opgeslagen",
+    "toast.batchUpdated": "Batch \"{name}\" bijgewerkt",
+    "toast.slotSaved": "Vak {slot} opgeslagen",
+    "confirm.deleteBatch": "Batch \"{name}\" verwijderen?",
+    "confirm.deletePart": "Onderdeel \"{name}\" verwijderen?",
+    "startup.started": "Gestart",
+    "startup.title": "Batch opstartcontrole",
+    "startup.subtitle": "Controleer eerst de hopperbezetting en robotarm-instellingen.",
+    "startup.standardMode": "Standaard vulmenu",
+    "startup.manualMode": "Zelf machine instellen",
+    "startup.manualAssignment": "Handmatige toewijzing",
+    "startup.assignmentDefault": "Kies een modus. In handmatige modus klik je eerst een onderdeel en daarna een hopper.",
+    "startup.startHopper": "Start hopper",
+    "startup.clearSelection": "Selectie wissen",
+    "startup.resetManual": "Handmatige indeling resetten",
+    "startup.checklist": "Opstart checklist",
+    "startup.robotLarge": "Robotarm en grote delen",
+    "startup.confirmStart": "Batch echt starten",
+    "startup.reserveEmpty": "Reserve / leeg",
+    "startup.unassignedNote": "{count} onderdeeltype(s) hebben nog geen vrije compatibele hopper.",
+    "startup.standardNote": "In standaard modus wordt automatisch getoond welke hopper gevuld moet worden. Elk onderdeeltype krijgt maximaal 1 compatibele hopper.",
+    "startup.manualComplete": "Alle compatibele onderdeeltypes zijn al handmatig toegewezen.",
+    "startup.manualInstruction": "Koppel elk onderdeeltype aan precies 1 compatibele hopper. Klik eerst op een hopper of een onderdeel; zodra beide gekozen zijn, wordt de toewijzing direct gezet.",
+    "startup.standardInstruction": "Standaard modus verdeelt automatisch elk compatibel onderdeeltype over een passende hopper.",
+    "startup.incompatible": "Dit onderdeel past niet in hoppertype {type}.",
+    "startup.summary": "Controleer voor start alle 25 hoppers. Deze batch gebruikt {types} onderdeeltypes, {total} stuks totaal en een batchgrootte van {size} {units}. {hopperTypes} types gaan via hoppers en {robotTypes} via robotarm.",
+    "startup.smallHoppers": "5 kleine bout-hoppers",
+    "startup.mediumHoppers": "5 medium bout-hoppers",
+    "startup.largeHoppers": "5 grote bout-hoppers",
+    "startup.washerHoppers": "10 washer-hoppers",
+    "startup.robotarmSeparate": "Robotarm onderdelen apart",
+    "startup.noFreeHopper": "{count} type(s) zonder vrije hopper",
+    "startup.checkUnassignedFirst": "Los eerst alle onderdeeltypes zonder vrije compatibele hopper op voordat je de batch start.",
+    "startup.checkHopperProduct": "Bevestig per hopper welk product erin zit voordat de batch wordt vrijgegeven.",
+    "startup.checkMode": "Gebruik standaard modus voor de voorgestelde vulling of handmatige modus om zelf de machine per hopper in te stellen.",
+    "startup.checkReserve": "Vul lege hopperposities eventueel als reserve voor omstellingen later in de shift.",
+    "startup.checkQuantities": "Controleer of aantallen en artikelen overeenkomen met de batchconfiguratie.",
+    "startup.checkSensors": "Controleer of sensoren, trilkommen en aanvoerbanen vrij zijn.",
+    "startup.robotarmLine": "{name} ({article}) uit {slots} loopt via robotarm.",
+    "startup.robotarmEmpty": "Alle grote delen kunnen via de robotarm worden verwerkt; er zijn in deze batch geen extra handmatige onderdelen gedetecteerd.",
+    "startup.unassignedLine": "{name} ({article}) uit {slots} heeft nog geen vrije compatibele hopper ({types}).",
+    "startup.warningPrefix": "Let op:",
+    "startup.assignFirst": "Wijs eerst een onderdeel toe aan deze hopper.",
+    "startup.hopperStarted": "Hopper {hopper} gestart",
+    "startup.cannotStartUnassigned": "Niet elk onderdeeltype heeft een vrije compatibele hopper. Pas eerst de batch of hoppertypes aan.",
+    "startup.assignAllFirst": "Wijs eerst elk compatibel onderdeeltype toe aan een hopper.",
+    "startup.startAllManual": "Start alle handmatig toegewezen hoppers voordat je de batch vrijgeeft.",
+    "control.transportStarting": "Transport process wordt gestart.",
+    "control.topbar": "Batch control",
+    "control.kicker": "Machine run",
+    "control.noActiveBatch": "Geen batch actief",
+    "control.startPrompt": "Start een batch om de machinecontrole te openen.",
+    "control.progress": "Batch progress",
+    "control.steps": "Stappen",
+    "control.robotarm": "Robotarm",
+    "control.started": "Started",
+    "control.markStepDone": "Stap gereed",
+    "control.markAllDone": "Alles gereed",
+    "control.closeRun": "Sluit run",
+    "control.hopperTasks": "Hopper opdrachten",
+    "control.nextAction": "Volgende actie",
+    "control.robotManual": "Robotarm / handmatig",
+    "control.operatorNote": "Operator notitie",
+    "control.operatorNotePlaceholder": "Noteer storingen, bijvullen of afwijkingen...",
+    "control.runFiles": "Run bestanden",
+    "control.transportLog": "Transport log",
+    "control.livePhase": "Live status",
+    "control.liveStep": "Actieve stap",
+    "control.liveConveyor": "Conveyor",
+    "control.liveLastLine": "Laatste regel",
+    "control.waitingTransport": "Wachten op transportstatus...",
+    "control.status.starting": "Start",
+    "control.status.connecting": "Verbinden",
+    "control.status.handshake": "Arduino check",
+    "control.status.running": "Draait",
+    "control.status.paused": "Pauze",
+    "control.status.stopped": "Gestopt",
+    "control.status.complete": "Gereed",
+    "control.status.standby": "Stand-by",
+    "control.step.waiting": "Wacht",
+    "control.step.active": "Actief",
+    "control.step.done": "Gereed",
+    "control.step.failed": "Storing",
+    "control.summary": "Batch {id} | {processed}/{total} stuks verwerkt | {hoppers} hopperopdrachten | {robot} robotarm/handmatige opdrachten.",
+    "control.pause": "Scherm pauze",
+    "control.resume": "Hervat scherm",
+    "control.monitorHopper": "Vul / bewaak {hopper}",
+    "control.stepSub": "{article} | buffer {buffer} | {qty} stuks",
+    "control.allHoppersDone": "Alle hopperopdrachten zijn verwerkt",
+    "control.checkFinal": "Controleer robotarm en eindcontrole.",
+    "control.unknownArticle": "Onbekend artikel",
+    "control.robotSub": "Buffer {buffer} | {qty} stuks | {status}",
+    "control.doneButton": "Gereed",
+    "control.failButton": "Storing",
+    "control.noRobotTasks": "Geen robotarm opdrachten",
+    "control.allViaHoppers": "Alles loopt via hoppers.",
+    "control.noTransportLines": "Nog geen transportregels ontvangen.",
+    "control.noHopperTasks": "Geen hopperopdrachten voor deze batch.",
+    "control.empty": "Leeg",
+    "control.noTask": "Geen opdracht",
+    "control.slotLine": "Hopper {hopper} | buffer {buffer} | {qty} stuks",
+    "control.statusLine": "Status: {status}",
+    "control.assignmentCount": "{count} opdracht{suffix}",
+    "control.slotOverview": "Slot overzicht",
+    "control.slotOverviewSub": "12 vakjes, alle controllers gecombineerd",
+    "control.liveWaiting": "Wachten op procesdata",
+    "control.liveStarting": "Machine start op",
+    "control.liveCountdown": "Start countdown",
+    "control.liveArduino": "Arduino verbinding controleren",
+    "control.liveBoxWait": "Wachten op doos",
+    "control.liveBoxDetected": "Doos gedetecteerd",
+    "control.liveHopperSequence": "Hopper-sequence actief",
+    "control.liveDispensing": "Hopper doseert",
+    "control.liveConveyorMove": "Conveyor beweegt",
+    "control.liveConveyorStopped": "Conveyor gestopt",
+    "control.liveEject": "Box uitvoeren",
+    "control.liveFinished": "Sequence gereed",
+    "control.liveAborted": "Proces afgebroken",
+    "control.liveNoSensor": "Sensorstatus onbekend",
+    "slot.label": "VAK",
+    "slot.unknown": "vak onbekend",
+    "slot.singular": "vak",
+    "slot.plural": "vakken",
+    "error.unknown": "Onbekende fout",
+    "hopper.smallBolts": "Kleine bouten",
+    "hopper.mediumBolts": "Medium bouten",
+    "hopper.largeBolts": "Grote bouten",
+    "hopper.washers": "Washers"
+  },
+  en: {
+    "nav.start": "Start",
+    "common.back": "Back",
+    "common.cancel": "Cancel",
+    "common.units": "pcs",
+    "common.pieces": "units",
+    "home.title": "Batch Configuration",
+    "home.subtitle": "Manage parts, create batches and assign parts to 12 slots.",
+    "home.saved.title": "Saved batches",
+    "home.saved.body": "View existing batches and start or delete them when needed.",
+    "home.saved.cta": "Open overview",
+    "home.new.title": "New batch",
+    "home.new.body": "Create a new batch and fill a 3 x 4 slot grid with parts.",
+    "home.new.cta": "Create batch",
+    "home.parts.title": "Manage parts",
+    "home.parts.body": "Add new parts and maintain the parts overview outside the code.",
+    "home.parts.cta": "Open parts",
+    "batchList.title": "Batches",
+    "batchList.section": "Saved batches",
+    "batchList.empty": "No batches saved yet. Create a new batch.",
+    "batchList.created": "Created",
+    "batchList.parts": "Parts",
+    "batchList.totalQty": "Total units",
+    "batchList.batchSize": "Batch size",
+    "batchList.start": "Start batch",
+    "batchList.edit": "Edit",
+    "batchList.delete": "Delete",
+    "partsAdmin.topbar": "Parts Management",
+    "partsAdmin.addTitle": "Add Parts",
+    "partsAdmin.name": "Part name",
+    "partsAdmin.article": "Article number",
+    "partsAdmin.weight": "Weight (grams)",
+    "partsAdmin.namePlaceholder": "E.g. Bolt M10 x 30mm",
+    "partsAdmin.articlePlaceholder": "E.g. BT-M10-030",
+    "partsAdmin.weightPlaceholder": "E.g. 12.5",
+    "partsAdmin.addButton": "Add part",
+    "partsAdmin.updateButton": "Save changes",
+    "partsAdmin.editTitle": "Edit part",
+    "partsAdmin.listTitle": "Existing parts",
+    "partsAdmin.search": "Search",
+    "partsAdmin.searchPlaceholder": "Search by name, article number or weight...",
+    "partsAdmin.empty": "No parts available yet.",
+    "partsAdmin.noSearchResults": "No parts found for this search.",
+    "partsAdmin.edit": "Edit",
+    "partsAdmin.delete": "Delete",
+    "newBatch.topbar": "New Batch",
+    "newBatch.details": "Batch Details",
+    "newBatch.manageParts": "Manage parts",
+    "newBatch.name": "Batch name",
+    "newBatch.size": "Batch size",
+    "newBatch.namePlaceholder": "E.g. Ford 2026 door set",
+    "newBatch.gridTitle": "Slot Grid 3 x 4",
+    "newBatch.save": "Save batch",
+    "newBatch.update": "Update batch",
+    "newBatch.editing": "Edit Batch",
+    "newBatch.row": "Row",
+    "newBatch.partsSingular": "part",
+    "newBatch.partsPlural": "parts",
+    "newBatch.totalUnits": "total units",
+    "newBatch.clickToConfigure": "Click to configure",
+    "import.title": "CSV import",
+    "import.file": "CSV file",
+    "import.set": "Select set",
+    "import.noSet": "No CSV loaded yet",
+    "import.apply": "Apply import",
+    "import.parts": "Parts",
+    "import.totalPerSet": "Units per set",
+    "import.createdParts": "New parts",
+    "import.updatedParts": "Updated",
+    "import.selectFile": "Choose a CSV file first.",
+    "import.selectSet": "Select a set first.",
+    "import.loaded": "{count} set(s) found in CSV.",
+    "import.applied": "CSV set {set} applied: {parts} parts, {qty} units.",
+    "modal.selectPart": "Select part",
+    "modal.searchPlaceholder": "Search by name or article number...",
+    "modal.quantity": "Quantity",
+    "modal.add": "Add",
+    "modal.partsInSlot": "Parts in this slot",
+    "modal.saveSlot": "Save slot",
+    "modal.slotTitle": "Configure slot {slot}",
+    "modal.slotSubtitle": "Add parts to this slot",
+    "modal.noResults": "No results",
+    "modal.emptySlot": "No parts added to this slot yet.",
+    "errors.batchNameRequired": "Batch name is required.",
+    "errors.batchSizeRequired": "Batch size must be at least 1.",
+    "errors.slotRequired": "Configure at least 1 slot.",
+    "errors.minQuantity": "Quantity must be at least 1",
+    "toast.batchStarted": "Batch \"{name}\" started",
+    "toast.batchDeleted": "Batch deleted",
+    "toast.partAdded": "Part added",
+    "toast.partUpdated": "Part updated",
+    "toast.partDeleted": "Part deleted",
+    "toast.batchSaved": "Batch \"{name}\" saved",
+    "toast.batchUpdated": "Batch \"{name}\" updated",
+    "toast.slotSaved": "Slot {slot} saved",
+    "confirm.deleteBatch": "Delete batch \"{name}\"?",
+    "confirm.deletePart": "Delete part \"{name}\"?",
+    "startup.started": "Started",
+    "startup.title": "Batch startup check",
+    "startup.subtitle": "Check hopper occupancy and robot arm settings first.",
+    "startup.standardMode": "Standard fill menu",
+    "startup.manualMode": "Configure machine manually",
+    "startup.manualAssignment": "Manual assignment",
+    "startup.assignmentDefault": "Choose a mode. In manual mode, click a part first and then a hopper.",
+    "startup.startHopper": "Start hopper",
+    "startup.clearSelection": "Clear selection",
+    "startup.resetManual": "Reset manual layout",
+    "startup.checklist": "Startup checklist",
+    "startup.robotLarge": "Robot arm and large parts",
+    "startup.confirmStart": "Start batch for real",
+    "startup.reserveEmpty": "Reserve / empty",
+    "startup.unassignedNote": "{count} part type(s) still do not have a free compatible hopper.",
+    "startup.standardNote": "In standard mode the system automatically shows which hopper must be filled. Each part type gets at most 1 compatible hopper.",
+    "startup.manualComplete": "All compatible part types have already been assigned manually.",
+    "startup.manualInstruction": "Assign each part type to exactly 1 compatible hopper. Click a hopper or a part first; once both are selected, the assignment is set immediately.",
+    "startup.standardInstruction": "Standard mode automatically distributes each compatible part type to a matching hopper.",
+    "startup.incompatible": "This part does not fit hopper type {type}.",
+    "startup.summary": "Check all 25 hoppers before starting. This batch uses {types} part types, {total} total units and a batch size of {size} {units}. {hopperTypes} types run through hoppers and {robotTypes} through the robot arm.",
+    "startup.smallHoppers": "5 small bolt hoppers",
+    "startup.mediumHoppers": "5 medium bolt hoppers",
+    "startup.largeHoppers": "5 large bolt hoppers",
+    "startup.washerHoppers": "10 washer hoppers",
+    "startup.robotarmSeparate": "Robot arm parts separate",
+    "startup.noFreeHopper": "{count} type(s) without a free hopper",
+    "startup.checkUnassignedFirst": "Resolve all part types without a free compatible hopper before starting the batch.",
+    "startup.checkHopperProduct": "Confirm which product is in each hopper before releasing the batch.",
+    "startup.checkMode": "Use standard mode for the suggested filling plan or manual mode to configure the machine per hopper yourself.",
+    "startup.checkReserve": "Optionally keep empty hopper positions as reserve for changeovers later in the shift.",
+    "startup.checkQuantities": "Check that quantities and articles match the batch configuration.",
+    "startup.checkSensors": "Check that sensors, vibratory bowls and feed lanes are clear.",
+    "startup.robotarmLine": "{name} ({article}) from {slots} runs through the robot arm.",
+    "startup.robotarmEmpty": "All large parts can be handled by the robot arm; no extra manual parts were detected in this batch.",
+    "startup.unassignedLine": "{name} ({article}) from {slots} still has no free compatible hopper ({types}).",
+    "startup.warningPrefix": "Attention:",
+    "startup.assignFirst": "Assign a part to this hopper first.",
+    "startup.hopperStarted": "Hopper {hopper} started",
+    "startup.cannotStartUnassigned": "Not every part type has a free compatible hopper. Adjust the batch or hopper types first.",
+    "startup.assignAllFirst": "Assign every compatible part type to a hopper first.",
+    "startup.startAllManual": "Start all manually assigned hoppers before releasing the batch.",
+    "control.transportStarting": "Transport process is starting.",
+    "control.topbar": "Batch control",
+    "control.kicker": "Machine run",
+    "control.noActiveBatch": "No active batch",
+    "control.startPrompt": "Start a batch to open machine control.",
+    "control.progress": "Batch progress",
+    "control.steps": "Steps",
+    "control.robotarm": "Robot arm",
+    "control.started": "Started",
+    "control.markStepDone": "Mark step done",
+    "control.markAllDone": "Mark all done",
+    "control.closeRun": "Close run",
+    "control.hopperTasks": "Hopper tasks",
+    "control.nextAction": "Next action",
+    "control.robotManual": "Robot arm / manual",
+    "control.operatorNote": "Operator note",
+    "control.operatorNotePlaceholder": "Note faults, refills or deviations...",
+    "control.runFiles": "Run files",
+    "control.transportLog": "Transport log",
+    "control.livePhase": "Live status",
+    "control.liveStep": "Active step",
+    "control.liveConveyor": "Conveyor",
+    "control.liveLastLine": "Last line",
+    "control.waitingTransport": "Waiting for transport status...",
+    "control.status.starting": "Start",
+    "control.status.connecting": "Connecting",
+    "control.status.handshake": "Arduino check",
+    "control.status.running": "Running",
+    "control.status.paused": "Paused",
+    "control.status.stopped": "Stopped",
+    "control.status.complete": "Done",
+    "control.status.standby": "Stand-by",
+    "control.step.waiting": "Waiting",
+    "control.step.active": "Active",
+    "control.step.done": "Done",
+    "control.step.failed": "Fault",
+    "control.summary": "Batch {id} | {processed}/{total} units processed | {hoppers} hopper tasks | {robot} robot arm/manual tasks.",
+    "control.pause": "Pause screen",
+    "control.resume": "Resume screen",
+    "control.monitorHopper": "Fill / monitor {hopper}",
+    "control.stepSub": "{article} | buffer {buffer} | {qty} units",
+    "control.allHoppersDone": "All hopper tasks have been processed",
+    "control.checkFinal": "Check robot arm and final inspection.",
+    "control.unknownArticle": "Unknown article",
+    "control.robotSub": "Buffer {buffer} | {qty} units | {status}",
+    "control.doneButton": "Done",
+    "control.failButton": "Fault",
+    "control.noRobotTasks": "No robot arm tasks",
+    "control.allViaHoppers": "Everything runs through hoppers.",
+    "control.noTransportLines": "No transport lines received yet.",
+    "control.noHopperTasks": "No hopper tasks for this batch.",
+    "control.empty": "Empty",
+    "control.noTask": "No task",
+    "control.slotLine": "Hopper {hopper} | buffer {buffer} | {qty} units",
+    "control.statusLine": "Status: {status}",
+    "control.assignmentCount": "{count} task{suffix}",
+    "control.slotOverview": "Slot overview",
+    "control.slotOverviewSub": "12 slots, all controllers combined",
+    "control.liveWaiting": "Waiting for process data",
+    "control.liveStarting": "Machine is starting",
+    "control.liveCountdown": "Start countdown",
+    "control.liveArduino": "Checking Arduino connection",
+    "control.liveBoxWait": "Waiting for box",
+    "control.liveBoxDetected": "Box detected",
+    "control.liveHopperSequence": "Hopper sequence active",
+    "control.liveDispensing": "Hopper dispensing",
+    "control.liveConveyorMove": "Conveyor moving",
+    "control.liveConveyorStopped": "Conveyor stopped",
+    "control.liveEject": "Ejecting box",
+    "control.liveFinished": "Sequence done",
+    "control.liveAborted": "Process aborted",
+    "control.liveNoSensor": "Sensor status unknown",
+    "slot.label": "SLOT",
+    "slot.unknown": "unknown slot",
+    "slot.singular": "slot",
+    "slot.plural": "slots",
+    "error.unknown": "Unknown error",
+    "hopper.smallBolts": "Small bolts",
+    "hopper.mediumBolts": "Medium bolts",
+    "hopper.largeBolts": "Large bolts",
+    "hopper.washers": "Washers"
+  },
+  cs: {
+    "nav.start": "Start",
+    "common.back": "Zpet",
+    "common.cancel": "Zrusit",
+    "common.units": "ks",
+    "home.title": "Konfigurace Davky",
+    "home.subtitle": "Spravujte dily, vytvarejte davky a prirazujte dily do 12 pozic.",
+    "home.saved.title": "Ulozene davky",
+    "home.saved.body": "Zobrazte existujici davky a podle potreby je spustte nebo smazte.",
+    "home.saved.cta": "Otevrit prehled",
+    "home.new.title": "Nova davka",
+    "home.new.body": "Vytvorte novou davku a vyplnte mrizku 3 x 4 dily.",
+    "home.new.cta": "Vytvorit davku",
+    "home.parts.title": "Sprava dilu",
+    "home.parts.body": "Pridavejte nove dily a udrzujte jejich prehled mimo kod.",
+    "home.parts.cta": "Otevrit dily",
+    "batchList.title": "Davky",
+    "batchList.section": "Ulozene davky",
+    "batchList.empty": "Zatim nejsou ulozeny zadne davky. Vytvorte novou davku.",
+    "batchList.created": "Vytvoreno",
+    "batchList.parts": "Dily",
+    "batchList.totalQty": "Celkem kusu",
+    "batchList.batchSize": "Velikost davky",
+    "batchList.start": "Spustit davku",
+    "batchList.edit": "Upravit",
+    "batchList.delete": "Smazat",
+    "partsAdmin.topbar": "Sprava Dilu",
+    "partsAdmin.addTitle": "Pridat Dily",
+    "partsAdmin.name": "Nazev dilu",
+    "partsAdmin.article": "Cislo dilu",
+    "partsAdmin.weight": "Hmotnost (gramy)",
+    "partsAdmin.namePlaceholder": "Napriklad Sroub M10 x 30mm",
+    "partsAdmin.articlePlaceholder": "Napriklad BT-M10-030",
+    "partsAdmin.weightPlaceholder": "Napriklad 12.5",
+    "partsAdmin.addButton": "Pridat dil",
+    "partsAdmin.updateButton": "Ulozit zmeny",
+    "partsAdmin.editTitle": "Upravit dil",
+    "partsAdmin.listTitle": "Existujici dily",
+    "partsAdmin.search": "Hledat",
+    "partsAdmin.searchPlaceholder": "Hledat podle nazvu, cisla dilu nebo hmotnosti...",
+    "partsAdmin.empty": "Zatim nejsou k dispozici zadne dily.",
+    "partsAdmin.noSearchResults": "Pro tento dotaz nebyly nalezeny zadne dily.",
+    "partsAdmin.edit": "Upravit",
+    "partsAdmin.delete": "Smazat",
+    "newBatch.topbar": "Nova Davka",
+    "newBatch.details": "Udaje Davky",
+    "newBatch.manageParts": "Sprava dilu",
+    "newBatch.name": "Nazev davky",
+    "newBatch.size": "Velikost davky",
+    "newBatch.namePlaceholder": "Napriklad Ford 2026 sada dveri",
+    "newBatch.gridTitle": "Mrizka Pozic 3 x 4",
+    "newBatch.save": "Ulozit davku",
+    "newBatch.update": "Aktualizovat davku",
+    "newBatch.editing": "Upravit Davku",
+    "newBatch.row": "Rada",
+    "newBatch.partsSingular": "dil",
+    "newBatch.partsPlural": "dily",
+    "newBatch.totalUnits": "kusu celkem",
+    "newBatch.clickToConfigure": "Kliknete pro konfiguraci",
+    "import.title": "CSV import",
+    "import.file": "CSV soubor",
+    "import.set": "Vyber sadu",
+    "import.noSet": "CSV zatim neni nacteno",
+    "import.apply": "Pouzit import",
+    "import.parts": "Dily",
+    "import.totalPerSet": "Kusu na sadu",
+    "import.createdParts": "Nove dily",
+    "import.updatedParts": "Aktualizovano",
+    "import.selectFile": "Nejprve vyberte CSV soubor.",
+    "import.selectSet": "Nejprve vyberte sadu.",
+    "import.loaded": "V CSV nalezeno {count} sad.",
+    "import.applied": "CSV sada {set} pouzita: {parts} dilu, {qty} kusu.",
+    "modal.selectPart": "Vyberte dil",
+    "modal.searchPlaceholder": "Hledat podle nazvu nebo cisla dilu...",
+    "modal.quantity": "Mnozstvi",
+    "modal.add": "Pridat",
+    "modal.partsInSlot": "Dily v teto pozici",
+    "modal.saveSlot": "Ulozit pozici",
+    "modal.slotTitle": "Konfigurovat pozici {slot}",
+    "modal.slotSubtitle": "Pridat dily do teto pozice",
+    "modal.noResults": "Zadne vysledky",
+    "modal.emptySlot": "Do teto pozice zatim nebyly pridany zadne dily.",
+    "errors.batchNameRequired": "Nazev davky je povinny.",
+    "errors.batchSizeRequired": "Velikost davky musi byt alespon 1.",
+    "errors.slotRequired": "Nakonfigurujte alespon 1 pozici.",
+    "errors.minQuantity": "Mnozstvi musi byt alespon 1",
+    "toast.batchStarted": "Davka \"{name}\" byla spustena",
+    "toast.batchDeleted": "Davka byla smazana",
+    "toast.partAdded": "Dil byl pridan",
+    "toast.partUpdated": "Dil byl aktualizovan",
+    "toast.partDeleted": "Dil byl smazan",
+    "toast.batchSaved": "Davka \"{name}\" byla ulozena",
+    "toast.batchUpdated": "Davka \"{name}\" byla aktualizovana",
+    "toast.slotSaved": "Pozice {slot} byla ulozena",
+    "confirm.deleteBatch": "Smazat davku \"{name}\"?",
+    "confirm.deletePart": "Smazat dil \"{name}\"?"
+  },
+  tr: {
+    "nav.start": "Baslangic",
+    "common.back": "Geri",
+    "common.cancel": "Iptal",
+    "common.units": "ad",
+    "home.title": "Parti Yapilandirma",
+    "home.subtitle": "Parcalari yonetin, partiler olusturun ve parcalari 12 yuvaya atayin.",
+    "home.saved.title": "Kayitli partiler",
+    "home.saved.body": "Mevcut partileri goruntuleyin ve gerekirse baslatin veya silin.",
+    "home.saved.cta": "Listeyi ac",
+    "home.new.title": "Yeni parti",
+    "home.new.body": "Yeni bir parti olusturun ve 3 x 4 yuvayi parcalarla doldurun.",
+    "home.new.cta": "Parti olustur",
+    "home.parts.title": "Parcalari yonet",
+    "home.parts.body": "Yeni parcalar ekleyin ve parca listesini kod disinda yonetin.",
+    "home.parts.cta": "Parcalari ac",
+    "batchList.title": "Partiler",
+    "batchList.section": "Kayitli partiler",
+    "batchList.empty": "Henuz kayitli parti yok. Yeni bir parti olusturun.",
+    "batchList.created": "Olusturulma",
+    "batchList.parts": "Parcalar",
+    "batchList.totalQty": "Toplam adet",
+    "batchList.batchSize": "Parti boyutu",
+    "batchList.start": "Partiyi baslat",
+    "batchList.edit": "Duzenle",
+    "batchList.delete": "Sil",
+    "partsAdmin.topbar": "Parca Yonetimi",
+    "partsAdmin.addTitle": "Parca Ekle",
+    "partsAdmin.name": "Parca adi",
+    "partsAdmin.article": "Urun numarasi",
+    "partsAdmin.weight": "Agirlik (gram)",
+    "partsAdmin.namePlaceholder": "Orn. Civa M10 x 30mm",
+    "partsAdmin.articlePlaceholder": "Orn. BT-M10-030",
+    "partsAdmin.weightPlaceholder": "Orn. 12.5",
+    "partsAdmin.addButton": "Parca ekle",
+    "partsAdmin.updateButton": "Degisiklikleri kaydet",
+    "partsAdmin.editTitle": "Parcayi duzenle",
+    "partsAdmin.listTitle": "Mevcut parcalar",
+    "partsAdmin.search": "Ara",
+    "partsAdmin.searchPlaceholder": "Ada, urun numarasina veya agirlik degerine gore ara...",
+    "partsAdmin.empty": "Henuz mevcut parca yok.",
+    "partsAdmin.noSearchResults": "Bu arama icin parca bulunamadi.",
+    "partsAdmin.edit": "Duzenle",
+    "partsAdmin.delete": "Sil",
+    "newBatch.topbar": "Yeni Parti",
+    "newBatch.details": "Parti Bilgileri",
+    "newBatch.manageParts": "Parcalari yonet",
+    "newBatch.name": "Parti adi",
+    "newBatch.size": "Parti boyutu",
+    "newBatch.namePlaceholder": "Orn. Ford 2026 kapi seti",
+    "newBatch.gridTitle": "Yuva Izgarasi 3 x 4",
+    "newBatch.save": "Partiyi kaydet",
+    "newBatch.update": "Partiyi guncelle",
+    "newBatch.editing": "Partiyi Duzenle",
+    "newBatch.row": "Satir",
+    "newBatch.partsSingular": "parca",
+    "newBatch.partsPlural": "parca",
+    "newBatch.totalUnits": "toplam adet",
+    "newBatch.clickToConfigure": "Yapilandirmak icin tiklayin",
+    "import.title": "CSV ice aktar",
+    "import.file": "CSV dosyasi",
+    "import.set": "Set sec",
+    "import.noSet": "CSV henuz yuklenmedi",
+    "import.apply": "Ice aktarmayi uygula",
+    "import.parts": "Parcalar",
+    "import.totalPerSet": "Set basina adet",
+    "import.createdParts": "Yeni parcalar",
+    "import.updatedParts": "Guncellendi",
+    "import.selectFile": "Once bir CSV dosyasi secin.",
+    "import.selectSet": "Once bir set secin.",
+    "import.loaded": "CSV icinde {count} set bulundu.",
+    "import.applied": "CSV seti {set} uygulandi: {parts} parca, {qty} adet.",
+    "modal.selectPart": "Parca sec",
+    "modal.searchPlaceholder": "Ad veya urun numarasina gore ara...",
+    "modal.quantity": "Adet",
+    "modal.add": "Ekle",
+    "modal.partsInSlot": "Bu yuvadaki parcalar",
+    "modal.saveSlot": "Yuvayi kaydet",
+    "modal.slotTitle": "{slot} yuvasini yapilandir",
+    "modal.slotSubtitle": "Bu yuvaya parcalar ekleyin",
+    "modal.noResults": "Sonuc yok",
+    "modal.emptySlot": "Bu yuvaya henuz parca eklenmedi.",
+    "errors.batchNameRequired": "Parti adi zorunludur.",
+    "errors.batchSizeRequired": "Parti boyutu en az 1 olmalidir.",
+    "errors.slotRequired": "En az 1 yuva yapilandirin.",
+    "errors.minQuantity": "Miktar en az 1 olmalidir",
+    "toast.batchStarted": "\"{name}\" partisi baslatildi",
+    "toast.batchDeleted": "Parti silindi",
+    "toast.partAdded": "Parca eklendi",
+    "toast.partUpdated": "Parca guncellendi",
+    "toast.partDeleted": "Parca silindi",
+    "toast.batchSaved": "\"{name}\" partisi kaydedildi",
+    "toast.batchUpdated": "\"{name}\" partisi guncellendi",
+    "toast.slotSaved": "{slot} yuvasi kaydedildi",
+    "confirm.deleteBatch": "\"{name}\" partisi silinsin mi?",
+    "confirm.deletePart": "\"{name}\" parcasi silinsin mi?"
+  }
+};
+
+let S = {
+  parts: [],
+  batches: [],
+  config: null,
+  slots: {},
+  editPartId: null,
+  editBatchId: null,
+  editSlot: null,
+  modalParts: [],
+  selectedPart: null,
+  search: "",
+  csvSets: [],
+  selectedCsvSetIndex: null,
+  partsAdminSearch: "",
+  language: "nl",
+  partsAdminReturnView: "home",
+  startupBatchId: null,
+  startupMode: "standard",
+  startupPlan: null,
+  selectedAssignableKey: null,
+  selectedHopperId: null,
+  manualAssignments: {},
+  startedHoppers: {},
+  controlRun: null,
+  controlPollTimer: null,
+  noteSaveTimer: null
+};
+
+function emptySlots() {
+  const slots = {};
+  SLOT_IDS.forEach(id => { slots[id] = []; });
+  return slots;
+}
+
+function t(key) {
+  return (I18N[S.language] && I18N[S.language][key]) || I18N.nl[key] || key;
+}
+
+function formatText(key, values = {}) {
+  let text = t(key);
+  Object.entries(values).forEach(([name, value]) => {
+    text = text.replaceAll(`{${name}}`, value);
+  });
+  return text;
+}
+
+function updateClock() {
+  const locale = S.language === "en" ? "en-US" : "nl-NL";
+  const tme = new Date().toLocaleTimeString(locale, {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  const dte = new Date().toLocaleDateString(locale, {day:"2-digit", month:"2-digit", year:"numeric"});
+  const str = dte + "   " + tme;
+  ["clock", "clock2", "clock3", "clock4", "clock5"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = str;
+  });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+function esc(value) {
+  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+async function api(path, opts = {}) {
+  const response = await fetch(path, opts);
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (error) {
+    data = {};
+  }
+  if (!response.ok) {
+    throw new Error(data.error || t("error.unknown"));
+  }
+  return data;
+}
+
+function applyTranslations() {
+  document.documentElement.lang = S.language;
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach(el => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+  renderBatchList();
+  renderPartsAdminList();
+  renderSlotGrid();
+  renderSlotParts();
+  renderCsvImport();
+  renderControlScreen();
+  renderStartupHopperGroups();
+  renderAssignablePartList();
+  updateStartupModeButtons();
+  updatePartFormMode();
+  updateBatchFormMode();
+  if (S.editSlot) {
+    document.getElementById("modal-slot-title").textContent = formatText("modal.slotTitle", { slot: S.editSlot });
+    document.getElementById("modal-slot-sub").textContent = t("modal.slotSubtitle");
+  }
+}
+
+function setLanguage(language) {
+  S.language = I18N[language] ? language : "nl";
+  try {
+    localStorage.setItem("uiLanguage", S.language);
+  } catch (error) {}
+  applyTranslations();
+}
+
+async function loadParts() {
+  S.parts = await api("/api/parts");
+  renderPartDropdown(getFilteredParts());
+  renderPartsAdminList();
+  updatePartFormMode();
+}
+
+async function loadBatches() {
+  S.batches = await api("/api/batches");
+}
+
+async function loadConfig() {
+  S.config = await api("/api/config");
+}
+
+function hopperTypeLabel(type) {
+  return {
+    smallBolts: t("hopper.smallBolts"),
+    mediumBolts: t("hopper.mediumBolts"),
+    largeBolts: t("hopper.largeBolts"),
+    washers: t("hopper.washers")
+  }[type] || type;
+}
+
+function formatWeightLabel(weightGrams) {
+  if (weightGrams == null || weightGrams === "") return "";
+  const numericWeight = Number(weightGrams);
+  if (!Number.isFinite(numericWeight)) return "";
+  const rounded = Math.round(numericWeight * 1000) / 1000;
+  return `${rounded.toLocaleString(undefined, { maximumFractionDigits: 3 })} g`;
+}
+
+function startupPartKey(part) {
+  if (part.partId != null) return `part:${part.partId}`;
+  return `fallback:${part.article || ""}:${part.name || ""}`;
+}
+
+function formatStartupSlotLabel(slotIds) {
+  const ids = (slotIds || []).filter(Boolean);
+  if (!ids.length) return t("slot.unknown");
+  return `${ids.length === 1 ? t("slot.singular") : t("slot.plural")} ${ids.join(", ")}`;
+}
+
+function formatStartupPartMeta(part) {
+  return `${part.article} | ${formatStartupSlotLabel(part.slotIds)} | ${part.totalQuantity}x`;
+}
+
+function getStartupLayout() {
+  return (S.config && S.config.hopperLayout) || {
+    smallBolts: ["S-1", "S-2", "S-3", "S-4", "S-5"],
+    mediumBolts: ["M-1", "M-2", "M-3", "M-4", "M-5"],
+    largeBolts: ["L-1", "L-2", "L-3", "L-4", "L-5"],
+    washers: ["W-1", "W-2", "W-3", "W-4", "W-5", "W-6", "W-7", "W-8", "W-9", "W-10"]
+  };
+}
+
+function compareStartupParts(a, b) {
+  return a.name.localeCompare(b.name, "nl") || a.article.localeCompare(b.article, "nl");
+}
+
+function collectStartupParts(batch) {
+  const partsByKey = new Map();
+  Object.entries(batch.slots || {}).forEach(([slotId, parts]) => {
+    (parts || []).forEach(part => {
+      const catalogPart = S.parts.find(item => item.id === part.partId) || {};
+      const key = startupPartKey(part);
+      if (!partsByKey.has(key)) {
+        partsByKey.set(key, {
+          partId: part.partId,
+          name: part.name,
+          article: part.article,
+          totalQuantity: 0,
+          slotIds: [],
+          allowedHopperTypes: (catalogPart.allowedHopperTypes || []).slice(),
+          handlingMethod: catalogPart.handlingMethod || "robotarm"
+        });
+      }
+      const entry = partsByKey.get(key);
+      entry.totalQuantity += parseInt(part.quantity, 10) || 0;
+      if (!entry.slotIds.includes(slotId)) {
+        entry.slotIds.push(slotId);
+      }
+    });
+  });
+  return Array.from(partsByKey.values())
+    .map(part => ({ ...part, assignmentKey: startupPartKey(part) }))
+    .sort(compareStartupParts);
+}
+
+function buildStandardAssignments(parts, flatHoppers) {
+  const hopperById = Object.fromEntries(flatHoppers.map(hopper => [hopper.hopperId, hopper]));
+  const optionsByPartIndex = parts.map(part =>
+    flatHoppers
+      .filter(hopper => (part.allowedHopperTypes || []).includes(hopper.hopperType))
+      .map(hopper => hopper.hopperId)
+  );
+  const assignedPartIndexByHopper = {};
+  const partOrder = parts
+    .map((part, index) => ({ part, index }))
+    .sort((a, b) =>
+      (optionsByPartIndex[a.index].length - optionsByPartIndex[b.index].length) ||
+      compareStartupParts(a.part, b.part)
+    )
+    .map(item => item.index);
+
+  function tryAssign(partIndex, visitedHoppers) {
+    for (const hopperId of optionsByPartIndex[partIndex]) {
+      if (visitedHoppers.has(hopperId)) continue;
+      visitedHoppers.add(hopperId);
+      const currentPartIndex = assignedPartIndexByHopper[hopperId];
+      if (currentPartIndex == null || tryAssign(currentPartIndex, visitedHoppers)) {
+        assignedPartIndexByHopper[hopperId] = partIndex;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  partOrder.forEach(partIndex => {
+    tryAssign(partIndex, new Set());
+  });
+
+  const standardAssignments = {};
+  flatHoppers.forEach(hopper => {
+    standardAssignments[hopper.hopperId] = null;
+  });
+
+  const assignedKeys = new Set();
+  Object.entries(assignedPartIndexByHopper).forEach(([hopperId, partIndex]) => {
+    const hopper = hopperById[hopperId];
+    if (!hopper) return;
+    standardAssignments[hopperId] = { ...parts[partIndex], hopperType: hopper.hopperType };
+    assignedKeys.add(startupPartKey(parts[partIndex]));
+  });
+
+  return {
+    standardAssignments,
+    unassignedParts: parts.filter(part => !assignedKeys.has(startupPartKey(part)))
+  };
+}
+
+function getAllowedHopperTypes() {
+  return Array.from(document.querySelectorAll(".hopper-type-checkbox:checked")).map(input => input.value);
+}
+
+function togglePartCapabilityInputs() {
+  const handling = document.getElementById("new-part-handling");
+  const options = document.getElementById("part-hopper-options");
+  if (!handling || !options) return;
+  options.classList.toggle("hidden", handling.value === "robotarm");
+}
+
+function updatePartFormMode() {
+  const title = document.getElementById("parts-admin-form-title");
+  const submit = document.getElementById("part-form-submit");
+  const cancel = document.getElementById("part-form-cancel");
+  if (title) {
+    title.textContent = S.editPartId ? t("partsAdmin.editTitle") : t("partsAdmin.addTitle");
+  }
+  if (submit) {
+    submit.textContent = S.editPartId ? t("partsAdmin.updateButton") : t("partsAdmin.addButton");
+  }
+  if (cancel) {
+    cancel.classList.toggle("hidden", !S.editPartId);
+  }
+}
+
+function resetPartForm() {
+  S.editPartId = null;
+  document.getElementById("new-part-name").value = "";
+  document.getElementById("new-part-article").value = "";
+  document.getElementById("new-part-weight").value = "";
+  document.getElementById("new-part-handling").value = "hopper";
+  document.querySelectorAll(".hopper-type-checkbox").forEach((input, index) => {
+    input.checked = index === 0;
+  });
+  document.getElementById("parts-admin-error").textContent = "";
+  togglePartCapabilityInputs();
+  updatePartFormMode();
+}
+
+function editPart(id) {
+  const part = S.parts.find(item => item.id === id);
+  if (!part) return;
+  S.editPartId = id;
+  document.getElementById("new-part-name").value = part.name || "";
+  document.getElementById("new-part-article").value = part.article || "";
+  document.getElementById("new-part-weight").value = part.weightGrams ?? "";
+  document.getElementById("new-part-handling").value = part.handlingMethod || "hopper";
+  document.querySelectorAll(".hopper-type-checkbox").forEach(input => {
+    input.checked = (part.allowedHopperTypes || []).includes(input.value);
+  });
+  document.getElementById("parts-admin-error").textContent = "";
+  togglePartCapabilityInputs();
+  updatePartFormMode();
+  document.getElementById("new-part-name").focus();
+}
+
+function filterPartsAdminList() {
+  const input = document.getElementById("parts-admin-search");
+  S.partsAdminSearch = input ? input.value.toLowerCase().trim() : "";
+  renderPartsAdminList();
+}
+
+function showView(name) {
+  document.querySelectorAll(".view").forEach(view => view.classList.remove("active"));
+  document.getElementById("view-" + name).classList.add("active");
+  if (name === "batch-list") renderBatchList();
+  if (name === "parts-admin") renderPartsAdminList();
+  if (name === "control") renderControlScreen();
+}
+
+function showPartsAdmin() {
+  const activeView = document.querySelector(".view.active");
+  S.partsAdminReturnView = activeView ? activeView.id.replace("view-", "") : "home";
+  showView("parts-admin");
+}
+
+function goBackFromPartsAdmin() {
+  showView(S.partsAdminReturnView || "home");
+}
+
+function renderBatchList() {
+  const el = document.getElementById("batch-list-container");
+  if (!el) return;
+  if (!S.batches.length) {
+    el.innerHTML = `<div class="batch-empty">${esc(t("batchList.empty"))}</div>`;
+    return;
+  }
+  el.innerHTML = S.batches.map(batch => `
+    <div class="batch-card">
+      <div class="batch-card-info">
+        <div class="batch-card-name">${esc(batch.name)}</div>
+        <div class="batch-card-meta">
+          <div class="batch-meta-item">ID: <strong>${esc(batch.id)}</strong></div>
+          <div class="batch-meta-item">${esc(t("batchList.created"))}: <strong>${esc(batch.created)}</strong></div>
+          <div class="batch-meta-item">${esc(t("batchList.parts"))}: <strong>${batch.partCount}</strong></div>
+          <div class="batch-meta-item">${esc(t("batchList.totalQty"))}: <strong>${batch.totalQty}</strong></div>
+          <div class="batch-meta-item">${esc(t("batchList.batchSize"))}: <strong>${batch.batchSize} ${esc(t("common.units"))}</strong></div>
+        </div>
+      </div>
+      <div class="batch-card-actions">
+        <button class="btn-start" type="button" onclick="startBatch('${esc(batch.id)}')">${esc(t("batchList.start"))}</button>
+        <button class="btn-ghost" type="button" onclick="editBatch('${esc(batch.id)}')">${esc(t("batchList.edit"))}</button>
+        <button class="btn-delete" type="button" onclick="confirmDelete('${esc(batch.id)}', '${esc(batch.name)}')">${esc(t("batchList.delete"))}</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function buildStartupPlan(batch) {
+  const layout = getStartupLayout();
+  const grouped = { smallBolts: [], mediumBolts: [], largeBolts: [], washers: [], robotarm: [] };
+  const assignableParts = [];
+  const flatHoppers = [];
+  ["smallBolts", "mediumBolts", "largeBolts", "washers"].forEach(group => {
+    layout[group].forEach(hopperId => {
+      flatHoppers.push({ hopperId, hopperType: group });
+    });
+  });
+
+  const startupParts = collectStartupParts(batch);
+  startupParts.forEach(part => {
+    if (part.handlingMethod === "robotarm" || !(part.allowedHopperTypes || []).length) {
+      grouped.robotarm.push(part);
+      return;
+    }
+    assignableParts.push(part);
+  });
+
+  const { standardAssignments, unassignedParts } = buildStandardAssignments(assignableParts, flatHoppers);
+  Object.values(standardAssignments)
+    .filter(Boolean)
+    .forEach(part => {
+      grouped[part.hopperType].push(part);
+    });
+
+  const hopperGroups = ["smallBolts", "mediumBolts", "largeBolts", "washers"].map(group => ({
+    key: group,
+    items: layout[group].map(hopperId => ({
+      hopperId,
+      hopperType: group,
+      part: standardAssignments[hopperId]
+    }))
+  }));
+
+  return {
+    hopperGroups,
+    robotarmParts: grouped.robotarm,
+    grouped,
+    assignableParts,
+    standardAssignments,
+    unassignedParts,
+    totalPartTypes: startupParts.length
+  };
+}
+
+function getCurrentAssignments() {
+  return S.startupMode === "manual" ? S.manualAssignments : (S.startupPlan ? S.startupPlan.standardAssignments : {});
+}
+
+function renderStartupHopperGroups() {
+  if (!S.startupPlan) return;
+  const assignments = getCurrentAssignments();
+  document.getElementById("startup-hopper-groups").innerHTML = S.startupPlan.hopperGroups.map(group => `
+    <div class="hopper-group">
+      <div class="hopper-group-title">${esc(hopperTypeLabel(group.key))}</div>
+      <div class="hopper-lines">
+        ${group.items.map(item => `
+          <div class="hopper-line ${S.startupMode === "manual" ? "clickable" : ""} ${S.selectedHopperId === item.hopperId ? "selected" : ""} ${S.startedHoppers[item.hopperId] ? "started" : ""}" onclick="selectHopper('${item.hopperId}')">
+            <div class="hopper-id">${esc(item.hopperId)}</div>
+            <div class="hopper-part">
+              ${assignments[item.hopperId] ? `
+                <div class="hopper-part-name">${esc(assignments[item.hopperId].name)}</div>
+                <div class="hopper-part-meta">${esc(formatStartupPartMeta(assignments[item.hopperId]))}</div>
+                ${S.startedHoppers[item.hopperId] ? `<div class="hopper-part-meta">${esc(t("startup.started"))}</div>` : ""}
+              ` : `<div class="hopper-part-empty">${esc(t("startup.reserveEmpty"))}</div>`}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderAssignablePartList() {
+  const el = document.getElementById("assignable-part-list");
+  if (!el || !S.startupPlan) return;
+  const assignedKeys = new Set(
+    Object.values(S.manualAssignments)
+      .filter(Boolean)
+      .map(startupPartKey)
+  );
+  const items = S.startupPlan.assignableParts.filter(part => !assignedKeys.has(startupPartKey(part)) || S.selectedAssignableKey === startupPartKey(part));
+  if (S.startupMode !== "manual") {
+    const unresolvedNote = S.startupPlan.unassignedParts.length
+      ? `<div class="subtle-note" style="margin-top:12px;color:#fca5a5;">${esc(formatText("startup.unassignedNote", { count: S.startupPlan.unassignedParts.length }))}</div>`
+      : "";
+    el.innerHTML = `<div class="subtle-note">${esc(t("startup.standardNote"))}</div>${unresolvedNote}`;
+    return;
+  }
+  if (!items.length) {
+    el.innerHTML = `<div class="subtle-note">${esc(t("startup.manualComplete"))}</div>`;
+    return;
+  }
+  el.innerHTML = items.map(part => {
+    const key = startupPartKey(part);
+    return `
+      <div class="assignable-item ${S.selectedAssignableKey === key ? "selected" : ""}" onclick="selectAssignablePart('${key}')">
+        <div class="assignable-name">${esc(part.name)}</div>
+        <div class="assignable-meta">${esc(formatStartupPartMeta(part))}</div>
+        <div class="parts-capabilities" style="margin-top:10px;">
+          ${(part.allowedHopperTypes || []).map(type => `<span class="capability-pill active">${esc(hopperTypeLabel(type))}</span>`).join("")}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function updateStartupModeButtons() {
+  document.getElementById("mode-standard-btn").classList.toggle("active", S.startupMode === "standard");
+  document.getElementById("mode-manual-btn").classList.toggle("active", S.startupMode === "manual");
+  document.getElementById("assignment-instruction").textContent = S.startupMode === "manual"
+    ? t("startup.manualInstruction")
+    : t("startup.standardInstruction");
+}
+
+function tryManualAssignment() {
+  if (S.startupMode !== "manual" || !S.selectedHopperId || !S.selectedAssignableKey || !S.startupPlan) return;
+  const part = S.startupPlan.assignableParts.find(item => startupPartKey(item) === S.selectedAssignableKey);
+  const hopperMeta = S.startupPlan.hopperGroups.flatMap(group => group.items).find(item => item.hopperId === S.selectedHopperId);
+  if (!part || !hopperMeta) return;
+  if (!(part.allowedHopperTypes || []).includes(hopperMeta.hopperType)) {
+    showToast(formatText("startup.incompatible", { type: hopperTypeLabel(hopperMeta.hopperType) }), "err");
+    return;
+  }
+  Object.entries(S.manualAssignments).forEach(([hopperId, assignedPart]) => {
+    if (hopperId !== S.selectedHopperId && assignedPart && startupPartKey(assignedPart) === S.selectedAssignableKey) {
+      delete S.manualAssignments[hopperId];
+      delete S.startedHoppers[hopperId];
+    }
+  });
+  S.manualAssignments[S.selectedHopperId] = { ...part, hopperType: hopperMeta.hopperType };
+  S.startedHoppers[S.selectedHopperId] = false;
+  S.selectedAssignableKey = null;
+  renderAssignablePartList();
+  renderStartupHopperGroups();
+}
+
+function renderStartupModal(batch) {
+  S.startupPlan = buildStartupPlan(batch);
+  S.startupMode = "standard";
+  S.selectedAssignableKey = null;
+  S.selectedHopperId = null;
+  S.manualAssignments = {};
+  S.startedHoppers = {};
+  document.getElementById("startup-batch-name").textContent = batch.name;
+  document.getElementById("startup-batch-summary").textContent = formatText("startup.summary", {
+    types: S.startupPlan.totalPartTypes,
+    total: batch.totalQty,
+    size: batch.batchSize,
+    units: t("common.units"),
+    hopperTypes: S.startupPlan.assignableParts.length,
+    robotTypes: S.startupPlan.robotarmParts.length
+  });
+  const startupPills = [
+    t("startup.smallHoppers"),
+    t("startup.mediumHoppers"),
+    t("startup.largeHoppers"),
+    t("startup.washerHoppers"),
+    t("startup.robotarmSeparate")
+  ];
+  if (S.startupPlan.unassignedParts.length) {
+    startupPills.push(formatText("startup.noFreeHopper", { count: S.startupPlan.unassignedParts.length }));
+  }
+  document.getElementById("startup-pill-row").innerHTML = startupPills.map(item => `<div class="startup-pill">${esc(item)}</div>`).join("");
+
+  const checklistItems = [
+    t("startup.checkHopperProduct"),
+    t("startup.checkMode"),
+    t("startup.checkReserve"),
+    t("startup.checkQuantities"),
+    t("startup.checkSensors")
+  ];
+  if (S.startupPlan.unassignedParts.length) {
+    checklistItems.unshift(t("startup.checkUnassignedFirst"));
+  }
+  document.getElementById("startup-checklist").innerHTML = checklistItems.map(item => `<li>${esc(item)}</li>`).join("");
+
+  const robotarmLines = S.startupPlan.robotarmParts.length
+    ? S.startupPlan.robotarmParts.map(part => formatText("startup.robotarmLine", { name: part.name, article: part.article, slots: formatStartupSlotLabel(part.slotIds) }))
+    : [t("startup.robotarmEmpty")];
+  S.startupPlan.unassignedParts.forEach(part => {
+    robotarmLines.unshift(formatText("startup.unassignedLine", {
+      name: part.name,
+      article: part.article,
+      slots: formatStartupSlotLabel(part.slotIds),
+      types: (part.allowedHopperTypes || []).map(hopperTypeLabel).join(", ")
+    }));
+  });
+  
+  document.getElementById("startup-warning").innerHTML = robotarmLines.map(item => `<li><strong>${esc(t("startup.warningPrefix"))}</strong> ${esc(item)}</li>`).join("");
+  updateStartupModeButtons();
+  renderAssignablePartList();
+  renderStartupHopperGroups();
+  document.getElementById("startup-modal").classList.remove("hidden");
+}
+
+function setStartupMode(mode) {
+  S.startupMode = mode;
+  S.selectedAssignableKey = null;
+  S.selectedHopperId = null;
+  updateStartupModeButtons();
+  renderAssignablePartList();
+  renderStartupHopperGroups();
+}
+
+function selectAssignablePart(key) {
+  if (S.startupMode !== "manual") return;
+  S.selectedAssignableKey = S.selectedAssignableKey === key ? null : key;
+  tryManualAssignment();
+  renderAssignablePartList();
+}
+
+function selectHopper(hopperId) {
+  if (!S.startupPlan) return;
+  if (S.startupMode !== "manual") return;
+  S.selectedHopperId = hopperId;
+  tryManualAssignment();
+  renderAssignablePartList();
+  renderStartupHopperGroups();
+}
+
+function clearSelectedAssignment() {
+  S.selectedAssignableKey = null;
+  S.selectedHopperId = null;
+  renderAssignablePartList();
+  renderStartupHopperGroups();
+}
+
+function resetManualAssignments() {
+  S.manualAssignments = {};
+  S.startedHoppers = {};
+  clearSelectedAssignment();
+}
+
+function startSelectedHopper() {
+  if (S.startupMode !== "manual" || !S.selectedHopperId) return;
+  if (!S.manualAssignments[S.selectedHopperId]) {
+    showToast(t("startup.assignFirst"), "err");
+    return;
+  }
+  S.startedHoppers[S.selectedHopperId] = true;
+  renderStartupHopperGroups();
+  showToast(formatText("startup.hopperStarted", { hopper: S.selectedHopperId }));
+}
+
+function startBatch(id) {
+  const batch = S.batches.find(item => item.id === id);
+  if (!batch) return;
+  S.startupBatchId = id;
+  renderStartupModal(batch);
+}
+
+function closeStartupModal() {
+  document.getElementById("startup-modal").classList.add("hidden");
+  S.startupBatchId = null;
+  S.startupPlan = null;
+}
+
+function createControlRun(batch, response) {
+  const activeBatch = response.activeBatch || {};
+  const hopperAssignments = (activeBatch.hopperAssignments || []).map((assignment, index) => ({
+    ...assignment,
+    id: `${assignment.hopper || "hopper"}-${index}`,
+    index,
+    hopperNumber: hopperIdToNumber(assignment.hopper),
+    arduinoId: arduinoForHopper(hopperIdToNumber(assignment.hopper)),
+    quantity: assignment.deliverQuantity,
+    status: index === 0 ? "active" : "waiting"
+  }));
+  const robotarmDeliveries = (activeBatch.robotarmDeliveries || []).map((delivery, index) => ({
+    ...delivery,
+    index,
+    status: "waiting"
+  }));
+  return {
+    batch,
+    activeBatch,
+    transportPid: response.transportPid,
+    mainControlPid: response.mainControlPid,
+    outputFile: response.outputFile,
+    hopperAssignments,
+    robotarmDeliveries,
+    status: "running",
+    transportStatus: "starting",
+    transportMessage: t("control.transportStarting"),
+    transportEvents: [],
+    live: null,
+    lastConsoleEventCount: 0,
+    startedAt: activeBatch.startedAt || new Date().toISOString(),
+    note: "",
+    completedAt: null
+  };
+}
+
+function hopperIdToNumber(hopperId) {
+  if (!hopperId || !hopperId.includes("-")) return null;
+  const [prefix, rawIndex] = hopperId.split("-");
+  const index = parseInt(rawIndex, 10);
+  if (!Number.isInteger(index)) return null;
+  const offsets = { S: 0, M: 5, L: 10, W: 15 };
+  const offset = offsets[(prefix || "").toUpperCase()];
+  return offset == null ? null : offset + index;
+}
+
+function arduinoForHopper(hopperNumber) {
+  return hopperNumber ? Math.floor((hopperNumber - 1) / 12) + 1 : null;
+}
+
+function localSlotForHopper(hopperNumber) {
+  return hopperNumber ? ((hopperNumber - 1) % 12) + 1 : null;
+}
+
+function startControlPolling() {
+  stopControlPolling();
+  S.controlPollTimer = setInterval(loadTransportStatus, 1500);
+  loadTransportStatus();
+}
+
+function stopControlPolling() {
+  if (S.controlPollTimer) {
+    clearInterval(S.controlPollTimer);
+    S.controlPollTimer = null;
+  }
+}
+
+function mapTransportCommandStatus(status) {
+  return {
+    waiting: "waiting",
+    active: "active",
+    success: "done",
+    fail: "failed"
+  }[status] || "waiting";
+}
+
+function cleanProcessLine(line) {
+  return String(line || "")
+    .replace(/^\[[A-Z_]+\]\s*/, "")
+    .replace(/^\[[A-Z_]+\]\s*/, "")
+    .trim();
+}
+
+function deriveLiveProcess(events) {
+  const lines = (events || []).map(event => ({
+    ...event,
+    line: cleanProcessLine(event.line || "")
+  })).filter(event => event.line);
+  const live = {
+    phase: t("control.liveWaiting"),
+    detail: t("control.noTransportLines"),
+    step: "--",
+    command: "--",
+    conveyor: "--",
+    sensor: t("control.liveNoSensor"),
+    lastLine: lines.length ? lines[lines.length - 1].line : "--",
+    updatedAt: lines.length ? lines[lines.length - 1].time : null,
+    currentStepIndex: null,
+    totalSteps: null,
+    failed: false,
+    complete: false
+  };
+
+  lines.forEach(event => {
+    const line = event.line;
+    const lower = line.toLowerCase();
+    const stepMatch = line.match(/--- step\s+(\d+)\/(\d+)\s+(.+?)\s+---/i);
+
+    if (lower.includes("transport aborted") || lower.includes("no arduino") || lower.includes("failed")) {
+      live.failed = true;
+      live.phase = t("control.liveAborted");
+      live.detail = line;
+    } else if (lower.includes("sequence finished") || lower.includes("alles klaar")) {
+      live.complete = true;
+      live.phase = t("control.liveFinished");
+      live.detail = line;
+    } else if (lower.includes("start over")) {
+      live.phase = t("control.liveCountdown");
+      live.detail = line;
+    } else if (lower.includes("scanning serial ports") || lower.includes("arduino_port")) {
+      live.phase = t("control.liveArduino");
+      live.detail = line;
+    } else if (lower.includes("wachten op doos") || lower.includes("wacht op s0")) {
+      live.phase = t("control.liveBoxWait");
+      live.detail = line;
+    } else if (lower.includes("doos gedetecteerd")) {
+      live.phase = t("control.liveBoxDetected");
+      live.detail = line;
+    } else if (lower.includes("start hopper-sequence") || lower.includes("sequence written")) {
+      live.phase = t("control.liveHopperSequence");
+      live.detail = line;
+    } else if (lower.includes("dispensing") || lower.includes("hopper(")) {
+      live.phase = t("control.liveDispensing");
+      live.detail = line;
+    } else if (lower.includes("doorschuiven") || lower.includes("[conveyor] start") || lower === "start") {
+      live.phase = t("control.liveConveyorMove");
+      live.detail = line;
+    } else if (lower.includes("[conveyor] stop") || lower === "stop" || lower.includes("stopped")) {
+      live.phase = t("control.liveConveyorStopped");
+      live.detail = line;
+    } else if (lower.includes("eject") || lower.includes("box uitvoeren")) {
+      live.phase = t("control.liveEject");
+      live.detail = line;
+    } else if (lower.includes("gestart") || lower.includes("starting batch")) {
+      live.phase = t("control.liveStarting");
+      live.detail = line;
+    }
+
+    if (stepMatch) {
+      live.currentStepIndex = Number(stepMatch[1]) - 1;
+      live.totalSteps = Number(stepMatch[2]);
+      live.step = `Step ${stepMatch[1]}/${stepMatch[2]}`;
+      live.command = stepMatch[3];
+      live.phase = t("control.liveHopperSequence");
+      live.detail = line;
+    } else if (lower.includes("hopper(") || lower.includes("dispensing")) {
+      live.command = line;
+    }
+
+    if (lower.includes("[conveyor]") || lower.includes("conveyor")) {
+      live.conveyor = line;
+    }
+    const sensorMatch = line.match(/\bS([0-3]):([01])\b/);
+    if (sensorMatch) {
+      live.sensor = `S${sensorMatch[1]} = ${sensorMatch[2]}`;
+    } else if (lower.includes("row ") || lower.includes("doos gedetecteerd")) {
+      live.sensor = line;
+    }
+  });
+
+  return live;
+}
+
+function applyLiveProcessToSteps(live) {
+  if (!S.controlRun || !live) return;
+  if (Number.isInteger(live.currentStepIndex)) {
+    S.controlRun.hopperAssignments = S.controlRun.hopperAssignments.map((assignment, index) => {
+      if (assignment.status === "failed") return assignment;
+      if (live.complete || index < live.currentStepIndex) return { ...assignment, status: "done" };
+      if (index === live.currentStepIndex) return { ...assignment, status: "active" };
+      return assignment.status === "done" ? assignment : { ...assignment, status: "waiting" };
+    });
+  }
+  if (live.complete) {
+    S.controlRun.hopperAssignments = S.controlRun.hopperAssignments.map(assignment =>
+      assignment.status === "failed" ? assignment : { ...assignment, status: "done" }
+    );
+  }
+}
+
+async function loadTransportStatus() {
+  if (!S.controlRun) return;
+  try {
+    const status = await api("/api/transport/status");
+    applyTransportStatus(status);
+  } catch (error) {
+    showToast(error.message, "err");
+  }
+}
+
+function applyTransportStatus(status) {
+  if (!S.controlRun || !status) return;
+  S.controlRun.transportStatus = status.status || S.controlRun.transportStatus || "idle";
+  S.controlRun.transportMessage = status.message || "";
+  S.controlRun.transportEvents = Array.isArray(status.events) ? status.events : [];
+  S.controlRun.live = deriveLiveProcess(S.controlRun.transportEvents);
+  applyLiveProcessToSteps(S.controlRun.live);
+  if (S.controlRun.live.complete) {
+    S.controlRun.status = "complete";
+  } else if (S.controlRun.live.failed && S.controlRun.status !== "paused") {
+    S.controlRun.status = "stopped";
+  }
+  if (typeof status.operatorNote === "string" && document.activeElement !== document.getElementById("control-note")) {
+    S.controlRun.note = status.operatorNote;
+  }
+  logNewTransportEventsToConsole();
+  if (Array.isArray(status.commands) && status.commands.length) {
+    const byIndex = new Map(status.commands.map(command => [command.index, command]));
+    S.controlRun.hopperAssignments = S.controlRun.hopperAssignments.map((assignment, index) => {
+      const command = byIndex.get(index);
+      return command
+        ? {
+            ...assignment,
+            arduinoId: command.arduinoId,
+            hopperNumber: command.hopperNumber,
+            hopper: command.hopper || assignment.hopper,
+            buffer: command.buffer || assignment.buffer,
+            article: command.article || assignment.article,
+            quantity: command.quantity,
+            command: command.command,
+            status: mapTransportCommandStatus(command.status)
+          }
+        : assignment;
+    });
+  }
+  if (S.controlRun.live.complete) {
+    S.controlRun.status = "complete";
+    stopControlPolling();
+  } else if (S.controlRun.live.failed) {
+    S.controlRun.status = "stopped";
+  } else if (status.status === "complete") {
+    S.controlRun.status = "complete";
+    stopControlPolling();
+  } else if (status.status === "failed" || status.status === "aborted") {
+    S.controlRun.status = "stopped";
+    stopControlPolling();
+  } else if (["connecting", "handshake", "running"].includes(status.status) && S.controlRun.status !== "paused") {
+    S.controlRun.status = status.status;
+  } else if (S.controlRun.status !== "paused") {
+    S.controlRun.status = "running";
+  }
+  renderControlScreen();
+}
+
+function logNewTransportEventsToConsole() {
+  if (!S.controlRun || !Array.isArray(S.controlRun.transportEvents)) return;
+  const events = S.controlRun.transportEvents;
+  const previousCount = S.controlRun.lastConsoleEventCount || 0;
+  const start = previousCount > events.length ? 0 : Math.max(0, previousCount);
+  events.slice(start).forEach(event => {
+    const line = event && event.line ? event.line : "";
+    if (!line) return;
+    if (event.level === "error") {
+      console.error(line);
+    } else {
+      console.log(line);
+    }
+  });
+  S.controlRun.lastConsoleEventCount = events.length;
+}
+
+function controlStatusLabel(status) {
+  return {
+    starting: t("control.status.starting"),
+    connecting: t("control.status.connecting"),
+    handshake: t("control.status.handshake"),
+    running: t("control.status.running"),
+    paused: t("control.status.paused"),
+    stopped: t("control.status.stopped"),
+    complete: t("control.status.complete")
+  }[status] || t("control.status.standby");
+}
+
+function getControlCounts() {
+  const run = S.controlRun;
+  const hoppers = run ? run.hopperAssignments : [];
+  const robotarm = run ? run.robotarmDeliveries : [];
+  const allSteps = hoppers.concat(robotarm);
+  const done = allSteps.filter(item => item.status === "done").length;
+  const failed = allSteps.filter(item => item.status === "failed").length;
+  const processed = done + failed;
+  const processedQty = allSteps
+    .filter(item => item.status === "done" || item.status === "failed")
+    .reduce((sum, item) => sum + Number(item.quantity || item.deliverQuantity || 0), 0);
+  const batch = run ? (run.activeBatch.batch || run.batch || {}) : {};
+  const totalQty = Number(batch.totalQty || run?.batch?.totalQty || 0);
+  return {
+    total: allSteps.length,
+    hopperTotal: hoppers.length,
+    hopperProcessed: hoppers.filter(item => item.status === "done" || item.status === "failed").length,
+    done,
+    failed,
+    processed,
+    processedQty,
+    totalQty,
+    percent: totalQty ? Math.min(100, Math.round((processedQty / totalQty) * 100)) : (allSteps.length ? Math.round((processed / allSteps.length) * 100) : 0)
+  };
+}
+
+function getCurrentControlStep() {
+  if (!S.controlRun) return null;
+  return S.controlRun.hopperAssignments.find(item => item.status === "active")
+    || S.controlRun.hopperAssignments.find(item => item.status === "waiting")
+    || null;
+}
+
+function advanceControlStep() {
+  if (!S.controlRun) return;
+  const next = S.controlRun.hopperAssignments.find(item => item.status === "waiting");
+  if (next && S.controlRun.status !== "stopped") {
+    next.status = "active";
+  }
+  const counts = getControlCounts();
+  if (counts.total && counts.processed === counts.total) {
+    S.controlRun.status = "complete";
+    S.controlRun.completedAt = new Date().toISOString();
+  }
+}
+
+function renderControlScreen() {
+  const run = S.controlRun;
+  if (!run) return;
+  const counts = getControlCounts();
+  const batch = run.activeBatch.batch || run.batch || {};
+  const statusDot = document.getElementById("control-status-dot");
+  document.getElementById("control-batch-name").textContent = batch.name || run.batch.name || "Batch";
+  document.getElementById("control-batch-summary").textContent =
+    formatText("control.summary", { id: batch.id || run.batch.id, processed: counts.processedQty, total: counts.totalQty || 0, hoppers: counts.hopperTotal, robot: run.robotarmDeliveries.length });
+  document.getElementById("control-status-text").textContent = controlStatusLabel(run.status);
+  document.getElementById("control-status-sub").textContent = `PID ${run.transportPid || "-"} | ${run.outputFile || "active_batch.json"}`;
+  statusDot.className = `status-dot ${["paused", "connecting", "handshake", "starting"].includes(run.status) ? "paused" : ""} ${run.status === "stopped" ? "stopped" : ""}`;
+  document.getElementById("control-progress-value").textContent = `${counts.percent}%`;
+  document.getElementById("control-progress-fill").style.width = `${counts.percent}%`;
+  document.getElementById("control-hopper-count").textContent = `${counts.processed}/${counts.total}`;
+  document.getElementById("control-robot-count").textContent = String(run.robotarmDeliveries.length);
+  document.getElementById("control-start-time").textContent = new Date(run.startedAt).toLocaleTimeString(S.language === "en" ? "en-US" : "nl-NL", { hour: "2-digit", minute: "2-digit" });
+  document.getElementById("control-pause-button").textContent = run.status === "paused" ? t("control.resume") : t("control.pause");
+  const noteEl = document.getElementById("control-note");
+  if (noteEl && document.activeElement !== noteEl) {
+    noteEl.value = run.note || "";
+  }
+  const live = run.live || deriveLiveProcess(run.transportEvents || []);
+  const livePhaseBox = document.getElementById("live-phase-box");
+  const liveStepBox = document.getElementById("live-step-box");
+  if (livePhaseBox) livePhaseBox.classList.toggle("error", !!live.failed);
+  if (liveStepBox) liveStepBox.classList.toggle("error", !!live.failed);
+  document.getElementById("control-live-phase").textContent = live.phase || "--";
+  document.getElementById("control-live-detail").textContent = live.detail || "--";
+  document.getElementById("control-live-step").textContent = live.step || "--";
+  document.getElementById("control-live-command").textContent = live.command || "--";
+  document.getElementById("control-live-conveyor").textContent = live.conveyor || "--";
+  document.getElementById("control-live-sensor").textContent = live.sensor || t("control.liveNoSensor");
+  document.getElementById("control-live-last-line").textContent = live.lastLine || "--";
+  document.getElementById("control-live-updated").textContent = live.updatedAt
+    ? new Date(live.updatedAt).toLocaleTimeString(S.language === "en" ? "en-US" : "nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "--";
+
+  document.getElementById("control-hopper-list").innerHTML = renderArduinoSlotBoards(run);
+
+  const currentStep = getCurrentControlStep();
+  document.getElementById("control-next-action").innerHTML = currentStep
+    ? `<div class="control-list-row">
+        <div>
+          <div class="control-list-main">${esc(formatText("control.monitorHopper", { hopper: currentStep.hopper || "-" }))}</div>
+          <div class="control-list-sub">${esc(formatText("control.stepSub", { article: currentStep.article || "-", buffer: currentStep.buffer || "-", qty: currentStep.deliverQuantity || 0 }))}</div>
+        </div>
+      </div>`
+    : `<div class="control-list-row"><div><div class="control-list-main">${esc(t("control.allHoppersDone"))}</div><div class="control-list-sub">${esc(t("control.checkFinal"))}</div></div></div>`;
+
+  document.getElementById("control-robot-list").innerHTML = run.robotarmDeliveries.length
+    ? run.robotarmDeliveries.map(item => `
+      <div class="control-list-row">
+        <div>
+          <div class="control-list-main">${esc(item.article || t("control.unknownArticle"))}</div>
+          <div class="control-list-sub">${esc(formatText("control.robotSub", { buffer: item.buffer || "-", qty: item.deliverQuantity || 0, status: controlStepLabel(item.status) }))}</div>
+          <div class="control-card-actions">
+            <button class="btn-ghost" type="button" onclick="setRobotStepStatus(${item.index}, 'done')">${esc(t("control.doneButton"))}</button>
+            <button class="btn-danger" type="button" onclick="setRobotStepStatus(${item.index}, 'failed')">${esc(t("control.failButton"))}</button>
+          </div>
+        </div>
+      </div>
+    `).join("")
+    : `<div class="control-list-row"><div><div class="control-list-main">${esc(t("control.noRobotTasks"))}</div><div class="control-list-sub">${esc(t("control.allViaHoppers"))}</div></div></div>`;
+
+  document.getElementById("control-run-files").innerHTML = `
+    <div class="control-list-row">
+      <div>
+        <div class="control-list-main">Transport process</div>
+        <div class="control-list-sub">PID ${esc(run.transportPid || "-")}</div>
+      </div>
+    </div>
+    <div class="control-list-row">
+      <div>
+        <div class="control-list-main">Main control process</div>
+        <div class="control-list-sub">PID ${esc(run.mainControlPid || "-")}</div>
+      </div>
+    </div>
+    <div class="control-list-row">
+      <div>
+        <div class="control-list-main">Active batch file</div>
+        <div class="control-list-sub">${esc(run.outputFile || "data/active_batch.json")}</div>
+      </div>
+    </div>
+  `;
+  const transportMessage = document.getElementById("control-transport-message");
+  const transportLog = document.getElementById("control-transport-log");
+  if (transportMessage) {
+    transportMessage.textContent = run.transportMessage || controlStatusLabel(run.transportStatus || run.status);
+  }
+  if (transportLog) {
+    const events = (run.transportEvents || []).slice(-120);
+    transportLog.innerHTML = events.length
+      ? events.map(event => `<div class="transport-log-line ${event.level === "error" ? "error" : ""}">${esc(event.line || "")}</div>`).join("")
+      : `<div class="transport-log-line">${esc(t("control.noTransportLines"))}</div>`;
+    transportLog.scrollTop = transportLog.scrollHeight;
+  }
+}
+
+function renderArduinoSlotBoards(run) {
+  const assignments = run.hopperAssignments || [];
+  if (!assignments.length) return `<div class="empty-state">${esc(t("control.noHopperTasks"))}</div>`;
+  const slots = Array.from({ length: 12 }, (_, slotIndex) => {
+    const slotNumber = slotIndex + 1;
+    const slotAssignments = assignments.filter(item => localSlotForHopper(item.hopperNumber) === slotNumber);
+    if (!slotAssignments.length) {
+      return `
+        <div class="arduino-slot empty">
+          <div class="arduino-slot-head">
+            <div class="arduino-slot-number">${slotNumber}</div>
+            <div class="arduino-slot-state">${esc(t("control.empty"))}</div>
+          </div>
+          <div class="arduino-slot-body">${esc(t("control.noTask"))}</div>
+        </div>
+      `;
+    }
+    const statusClass = slotAssignments.some(item => item.status === "active")
+      ? "active"
+      : slotAssignments.some(item => item.status === "failed")
+        ? "failed"
+        : slotAssignments.every(item => item.status === "done")
+          ? "done"
+          : "waiting";
+    const rows = slotAssignments
+      .sort((a, b) => Number(a.arduinoId || 0) - Number(b.arduinoId || 0))
+      .map(assignment => `
+        <div class="arduino-slot-body">
+          <strong>A${esc(assignment.arduinoId || arduinoForHopper(assignment.hopperNumber) || "-")} - ${esc(assignment.article || t("control.unknownArticle"))}</strong>
+          ${esc(formatText("control.slotLine", { hopper: assignment.hopper || assignment.hopperNumber || "-", buffer: assignment.buffer || "-", qty: assignment.quantity || assignment.deliverQuantity || 0 }))}<br>
+          ${esc(formatText("control.statusLine", { status: controlStepLabel(assignment.status) }))}
+          <div class="control-card-actions">
+            <button class="btn-ghost" type="button" onclick="setControlStepStatus(${assignment.index}, 'done')">${esc(t("control.doneButton"))}</button>
+            <button class="btn-danger" type="button" onclick="setControlStepStatus(${assignment.index}, 'failed')">${esc(t("control.failButton"))}</button>
+          </div>
+        </div>
+      `).join("");
+    return `
+      <div class="arduino-slot ${esc(statusClass)}">
+        <div class="arduino-slot-head">
+          <div class="arduino-slot-number">${slotNumber}</div>
+          <div class="arduino-slot-state">${esc(formatText("control.assignmentCount", { count: slotAssignments.length, suffix: S.language === "en" ? (slotAssignments.length === 1 ? "" : "s") : (slotAssignments.length === 1 ? "" : "en") }))}</div>
+        </div>
+        ${rows}
+      </div>
+    `;
+  }).join("");
+  return `
+    <div class="arduino-board">
+      <div class="arduino-board-title">
+        <div class="arduino-board-title-main">${esc(t("control.slotOverview"))}</div>
+        <div class="arduino-board-title-sub">${esc(t("control.slotOverviewSub"))}</div>
+      </div>
+      <div class="arduino-slot-grid">${slots}</div>
+    </div>
+  `;
+}
+
+function controlStepLabel(status) {
+  return {
+    waiting: t("control.step.waiting"),
+    active: t("control.step.active"),
+    done: t("control.step.done"),
+    failed: t("control.step.failed")
+  }[status] || status;
+}
+
+function openControlScreen(batch, response) {
+  S.controlRun = createControlRun(batch, response);
+  renderControlScreen();
+  showView("control");
+  startControlPolling();
+}
+
+function setControlStepStatus(index, status) {
+  if (!S.controlRun || !S.controlRun.hopperAssignments[index]) return;
+  S.controlRun.hopperAssignments[index].status = status;
+  if (status === "done" || status === "failed") {
+    advanceControlStep();
+  }
+  renderControlScreen();
+}
+
+function setRobotStepStatus(index, status) {
+  if (!S.controlRun || !S.controlRun.robotarmDeliveries[index]) return;
+  S.controlRun.robotarmDeliveries[index].status = status;
+  if (status === "done" || status === "failed") {
+    advanceControlStep();
+  }
+  renderControlScreen();
+}
+
+function markCurrentStepDone() {
+  const step = getCurrentControlStep();
+  if (!S.controlRun || !step) return;
+  step.status = "done";
+  advanceControlStep();
+  renderControlScreen();
+}
+
+function markAllStepsDone() {
+  if (!S.controlRun) return;
+  S.controlRun.hopperAssignments.forEach(item => { item.status = "done"; });
+  S.controlRun.status = "complete";
+  S.controlRun.completedAt = new Date().toISOString();
+  stopControlPolling();
+  renderControlScreen();
+}
+
+function toggleControlPause() {
+  if (!S.controlRun || S.controlRun.status === "complete" || S.controlRun.status === "stopped") return;
+  S.controlRun.status = S.controlRun.status === "paused" ? "running" : "paused";
+  renderControlScreen();
+}
+
+function stopControlRun() {
+  if (!S.controlRun) return;
+  S.controlRun.status = "stopped";
+  stopControlPolling();
+  renderControlScreen();
+}
+
+function saveControlNote() {
+  if (!S.controlRun) return;
+  S.controlRun.note = document.getElementById("control-note").value;
+  clearTimeout(S.noteSaveTimer);
+  S.noteSaveTimer = setTimeout(async () => {
+    try {
+      await api("/api/transport/note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: S.controlRun ? S.controlRun.note : "" })
+      });
+    } catch (error) {
+      showToast(error.message, "err");
+    }
+  }, 350);
+}
+
+function leaveControlScreen() {
+  stopControlPolling();
+  showView("batch-list");
+}
+
+async function confirmStartBatch() {
+  if (!S.startupBatchId || !S.startupPlan) return;
+  if (S.startupPlan.unassignedParts.length) {
+    showToast(t("startup.cannotStartUnassigned"), "err");
+    return;
+  }
+  const assignments = getCurrentAssignments();
+  const assignedKeys = new Set(
+    Object.values(assignments)
+      .filter(Boolean)
+      .map(startupPartKey)
+  );
+  const missingParts = S.startupPlan.assignableParts.filter(part => !assignedKeys.has(startupPartKey(part)));
+  if (missingParts.length) {
+    showToast(t("startup.assignAllFirst"), "err");
+    return;
+  }
+  if (S.startupMode === "manual") {
+    const unstartedHoppers = Object.entries(S.manualAssignments).filter(([hopperId, part]) => part && !S.startedHoppers[hopperId]);
+    if (unstartedHoppers.length) {
+      showToast(t("startup.startAllManual"), "err");
+      return;
+    }
+  }
+  const batch = S.batches.find(item => item.id === S.startupBatchId);
+  try {
+    const response = await api("/api/pick/" + S.startupBatchId, { method: "POST" });
+    closeStartupModal();
+    if (batch) {
+      openControlScreen(batch, response);
+      showToast(formatText("toast.batchStarted", { name: batch.name }));
+    }
+  } catch (error) {
+    showToast(error.message, "err");
+  }
+}
+
+function confirmDelete(id, name) {
+  if (!confirm(formatText("confirm.deleteBatch", { name }))) return;
+  api("/api/batches/" + id, { method: "DELETE" })
+    .then(loadBatches)
+    .then(renderBatchList)
+    .then(() => showToast(t("toast.batchDeleted")))
+    .catch(error => showToast(error.message, "err"));
+}
+
+function renderPartsAdminList() {
+  const el = document.getElementById("parts-admin-list");
+  if (!el) return;
+  if (!S.parts.length) {
+    el.innerHTML = `<div class="empty-state">${esc(t("partsAdmin.empty"))}</div>`;
+    return;
+  }
+  const query = (S.partsAdminSearch || "").trim();
+  const parts = !query
+    ? S.parts
+    : S.parts.filter(part => {
+        const searchBlob = [
+          part.name,
+          part.article,
+          formatWeightLabel(part.weightGrams),
+          part.weightGrams == null ? "" : String(part.weightGrams)
+        ].join(" ").toLowerCase();
+        return searchBlob.includes(query);
+      });
+  if (!parts.length) {
+    el.innerHTML = `<div class="empty-state">${esc(t("partsAdmin.noSearchResults"))}</div>`;
+    return;
+  }
+  el.innerHTML = parts.map(part => `
+    <div class="part-row">
+      <div>
+        <div class="part-name">${esc(part.name)}</div>
+        <div class="part-article">${esc(part.article)}</div>
+        ${part.weightGrams != null ? `<div class="part-secondary">${esc(formatWeightLabel(part.weightGrams))}</div>` : ""}
+        <div class="parts-capabilities" style="margin-top:8px;">
+          ${part.handlingMethod === "robotarm"
+            ? '<span class="capability-pill robotarm">Robotarm</span>'
+            : (part.allowedHopperTypes || []).map(type => `<span class="capability-pill active">${esc(hopperTypeLabel(type))}</span>`).join("")}
+        </div>
+      </div>
+      <div class="part-row-actions">
+        <button class="btn-ghost" type="button" onclick="editPart(${part.id})">${esc(t("partsAdmin.edit"))}</button>
+        <button class="btn-danger" type="button" onclick="deletePart(${part.id})">${esc(t("partsAdmin.delete"))}</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function submitPartForm() {
+  const name = document.getElementById("new-part-name").value.trim();
+  const article = document.getElementById("new-part-article").value.trim();
+  const weightRaw = document.getElementById("new-part-weight").value.trim().replace(",", ".");
+  const handlingMethod = document.getElementById("new-part-handling").value;
+  const allowedHopperTypes = handlingMethod === "robotarm" ? [] : getAllowedHopperTypes();
+  const weightGrams = weightRaw === "" ? null : (Number.isFinite(Number(weightRaw)) ? Number(weightRaw) : weightRaw);
+  const err = document.getElementById("parts-admin-error");
+  err.textContent = "";
+  const wasEditing = S.editPartId != null;
+  try {
+    await api(wasEditing ? "/api/parts/" + S.editPartId : "/api/parts", {
+      method: wasEditing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, article, weightGrams, handlingMethod, allowedHopperTypes })
+    });
+    await loadParts();
+    resetPartForm();
+    showToast(t(wasEditing ? "toast.partUpdated" : "toast.partAdded"));
+  } catch (error) {
+    err.textContent = error.message;
+  }
+}
+
+async function deletePart(id) {
+  const part = S.parts.find(item => item.id === id);
+  if (!part) return;
+  const name = part.name || "";
+  if (!confirm(formatText("confirm.deletePart", { name }))) return;
+  try {
+    await api("/api/parts/" + id, { method: "DELETE" });
+    await loadParts();
+    if (S.editPartId === id) {
+      resetPartForm();
+    }
+    showToast(t("toast.partDeleted"));
+  } catch (error) {
+    showToast(error.message, "err");
+  }
+}
+
+function newBatchInit() {
+  S.editBatchId = null;
+  S.slots = emptySlots();
+  document.getElementById("batch-name").value = "";
+  document.getElementById("batch-size").value = "100";
+  resetCsvImport();
+  updateBatchFormMode();
+  clearErr("name");
+  clearErr("size");
+  clearErr("slots");
+  renderSlotGrid();
+  showView("new-batch");
+}
+
+function updateBatchFormMode() {
+  const title = document.getElementById("new-batch-title");
+  const saveButton = document.getElementById("save-batch-button");
+  if (title) {
+    title.textContent = S.editBatchId ? t("newBatch.editing") : t("newBatch.topbar");
+  }
+  if (saveButton) {
+    saveButton.textContent = S.editBatchId ? t("newBatch.update") : t("newBatch.save");
+  }
+}
+
+function editBatch(id) {
+  const batch = S.batches.find(item => item.id === id);
+  if (!batch) return;
+  S.editBatchId = id;
+  S.slots = JSON.parse(JSON.stringify(batch.slots || emptySlots()));
+  document.getElementById("batch-name").value = batch.name || "";
+  document.getElementById("batch-size").value = batch.batchSize || 100;
+  resetCsvImport();
+  clearErr("name");
+  clearErr("size");
+  clearErr("slots");
+  updateBatchFormMode();
+  renderSlotGrid();
+  showView("new-batch");
+}
+
+function renderSlotGrid() {
+  const grid = document.getElementById("slot-grid");
+  if (!grid) return;
+  const html = [];
+  SLOT_ROWS.forEach(row => {
+    html.push(`<div class="slot-row-label">${esc(t("newBatch.row"))} ${row}</div>`);
+    SLOT_COLUMNS.forEach(col => {
+      const id = row + col;
+      const parts = S.slots[id] || [];
+      const configured = parts.length > 0;
+      const totalQty = parts.reduce((sum, part) => sum + Number(part.quantity || 0), 0);
+      html.push(`
+        <div class="slot-cell ${configured ? "configured" : ""}" onclick="openSlotModal('${id}')">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="slot-id">${esc(t("slot.label"))} ${id}</div>
+            <div class="slot-status-dot"></div>
+          </div>
+          ${configured
+            ? `<div class="slot-info">
+                <div class="slot-parts-count">${parts.length} ${esc(parts.length === 1 ? t("newBatch.partsSingular") : t("newBatch.partsPlural"))}</div>
+                <div class="slot-qty-total">${totalQty} ${esc(t("newBatch.totalUnits"))}</div>
+              </div>`
+            : `<div class="slot-empty-hint">${esc(t("newBatch.clickToConfigure"))}</div>`}
+          <div class="slot-add-hint">${configured ? "&#10003;" : "+"}</div>
+        </div>
+      `);
+    });
+  });
+  grid.innerHTML = html.join("");
+}
+
+function adjustBatchSize(delta) {
+  const el = document.getElementById("batch-size");
+  el.value = Math.max(1, (parseInt(el.value, 10) || 0) + delta);
+}
+
+function setBatchSize(value) {
+  document.getElementById("batch-size").value = value;
+}
+
+function getSelectedCsvSet() {
+  if (S.selectedCsvSetIndex == null) return null;
+  return S.csvSets[S.selectedCsvSetIndex] || null;
+}
+
+function resetCsvImport(clearFile = true) {
+  S.csvSets = [];
+  S.selectedCsvSetIndex = null;
+  if (clearFile) {
+    const fileInput = document.getElementById("csv-import-file");
+    if (fileInput) fileInput.value = "";
+  }
+  clearErr("import");
+  renderCsvImport();
+}
+
+function renderCsvImport() {
+  const select = document.getElementById("csv-set-select");
+  const applyButton = document.getElementById("csv-apply-button");
+  const summary = document.getElementById("csv-import-summary");
+  const preview = document.getElementById("csv-import-preview");
+  if (!select || !applyButton || !summary || !preview) return;
+
+  const selectedSet = getSelectedCsvSet();
+  select.disabled = !S.csvSets.length;
+  applyButton.disabled = !selectedSet;
+  select.innerHTML = S.csvSets.length
+    ? S.csvSets.map((set, index) => `
+        <option value="${index}" ${index === S.selectedCsvSetIndex ? "selected" : ""}>
+          ${esc(set.setNumber || set.name)} - ${set.partCount} ${esc(t("import.parts"))}
+        </option>
+      `).join("")
+    : `<option value="">${esc(t("import.noSet"))}</option>`;
+
+  if (!selectedSet) {
+    summary.innerHTML = "";
+    preview.innerHTML = "";
+    return;
+  }
+
+  summary.innerHTML = `
+    <span>${esc(selectedSet.name)}</span>
+    <span>${esc(t("import.parts"))}: <strong>${selectedSet.partCount}</strong></span>
+    <span>${esc(t("import.totalPerSet"))}: <strong>${selectedSet.totalPerSet}</strong></span>
+  `;
+  preview.innerHTML = selectedSet.parts.slice(0, 24).map(part => `
+    <div class="import-part-chip">
+      <div class="import-part-chip-name">${esc(part.name)}</div>
+      <div class="import-part-chip-meta">${esc(part.article)} | ${esc(part.position)} | ${part.quantityPerSet}x | ${part.weightGrams == null ? "-" : esc(part.weightGrams)}g</div>
+    </div>
+  `).join("");
+}
+
+async function previewCsvImport() {
+  const input = document.getElementById("csv-import-file");
+  const file = input && input.files ? input.files[0] : null;
+  if (!file) {
+    resetCsvImport(false);
+    setErr("import", t("import.selectFile"));
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const data = await api("/api/import/csv", {
+      method: "POST",
+      body: formData
+    });
+    S.csvSets = data.sets || [];
+    S.selectedCsvSetIndex = S.csvSets.length ? 0 : null;
+    clearErr("import");
+    renderCsvImport();
+    showToast(formatText("import.loaded", { count: S.csvSets.length }));
+  } catch (error) {
+    S.csvSets = [];
+    S.selectedCsvSetIndex = null;
+    renderCsvImport();
+    setErr("import", error.message);
+  }
+}
+
+function selectCsvSet() {
+  const select = document.getElementById("csv-set-select");
+  const index = parseInt(select.value, 10);
+  S.selectedCsvSetIndex = Number.isInteger(index) ? index : null;
+  clearErr("import");
+  renderCsvImport();
+}
+
+async function applyCsvImport() {
+  const selectedSet = getSelectedCsvSet();
+  const batchSize = parseInt(document.getElementById("batch-size").value, 10);
+  if (!selectedSet) {
+    setErr("import", t("import.selectSet"));
+    return;
+  }
+  if (!batchSize || batchSize < 1) {
+    setErr("size", t("errors.batchSizeRequired"));
+    return;
+  }
+  try {
+    const result = await api("/api/import/csv/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ set: selectedSet, batchSize })
+    });
+    document.getElementById("batch-name").value = result.name || selectedSet.name || "";
+    document.getElementById("batch-size").value = result.batchSize || batchSize;
+    S.slots = result.slots || emptySlots();
+    await loadParts();
+    renderSlotGrid();
+    clearErr("import");
+    clearErr("name");
+    clearErr("size");
+    clearErr("slots");
+    const setLabel = result.setNumber || selectedSet.setNumber || selectedSet.name;
+    showToast(formatText("import.applied", { set: setLabel, parts: result.partCount, qty: result.totalQty }));
+  } catch (error) {
+    setErr("import", error.message);
+  }
+}
+
+function setErr(field, msg) {
+  document.getElementById("err-" + field).textContent = msg;
+}
+
+function clearErr(field) {
+  document.getElementById("err-" + field).textContent = "";
+}
+
+async function saveBatch() {
+  let ok = true;
+  const name = document.getElementById("batch-name").value.trim();
+  const size = parseInt(document.getElementById("batch-size").value, 10);
+  const anySlot = Object.values(S.slots).some(parts => parts.length > 0);
+  if (!name) {
+    setErr("name", t("errors.batchNameRequired"));
+    ok = false;
+  } else {
+    clearErr("name");
+  }
+  if (!size || size < 1) {
+    setErr("size", t("errors.batchSizeRequired"));
+    ok = false;
+  } else {
+    clearErr("size");
+  }
+  if (!anySlot) {
+    setErr("slots", t("errors.slotRequired"));
+    ok = false;
+  } else {
+    clearErr("slots");
+  }
+  if (!ok) return;
+  try {
+    const method = S.editBatchId ? "PUT" : "POST";
+    const path = S.editBatchId ? "/api/batches/" + S.editBatchId : "/api/batches";
+    const batch = await api(path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, batchSize: size, slots: S.slots })
+    });
+    await loadBatches();
+    showToast(formatText(S.editBatchId ? "toast.batchUpdated" : "toast.batchSaved", { name: batch.name }));
+    S.editBatchId = null;
+    updateBatchFormMode();
+    showView("home");
+  } catch (error) {
+    showToast(error.message, "err");
+  }
+}
+
+function openSlotModal(slotId) {
+  S.editSlot = slotId;
+  S.modalParts = JSON.parse(JSON.stringify(S.slots[slotId] || []));
+  S.selectedPart = null;
+  S.search = "";
+  document.getElementById("modal-slot-title").textContent = formatText("modal.slotTitle", { slot: slotId });
+  document.getElementById("modal-slot-sub").textContent = t("modal.slotSubtitle");
+  document.getElementById("part-search").value = "";
+  document.getElementById("modal-qty").value = "50";
+  document.getElementById("btn-add-part").disabled = true;
+  renderPartDropdown(S.parts);
+  renderSlotParts();
+  document.getElementById("slot-modal").classList.remove("hidden");
+}
+
+function closeModal() {
+  document.getElementById("slot-modal").classList.add("hidden");
+  S.editSlot = null;
+}
+
+function getFilteredParts() {
+  const query = S.search.toLowerCase();
+  return S.parts.filter(part =>
+    part.name.toLowerCase().includes(query) || part.article.toLowerCase().includes(query)
+  );
+}
+
+function filterParts() {
+  S.search = document.getElementById("part-search").value.toLowerCase();
+  const filtered = getFilteredParts();
+  if (S.selectedPart && !filtered.some(part => part.id === S.selectedPart.id)) {
+    S.selectedPart = null;
+  }
+  renderPartDropdown(filtered);
+  document.getElementById("btn-add-part").disabled = !S.selectedPart;
+}
+
+function renderPartDropdown(parts) {
+  const el = document.getElementById("part-dropdown");
+  if (!el) return;
+  if (!parts.length) {
+    el.innerHTML = `<div class="part-option" style="color:var(--text3);cursor:default;">${esc(t("modal.noResults"))}</div>`;
+    return;
+  }
+  el.innerHTML = parts.map(part => `
+    <div class="part-option ${S.selectedPart && S.selectedPart.id === part.id ? "selected" : ""}" onclick="selectPart(${part.id})">
+      <div>
+        <div class="part-option-name">${esc(part.name)}</div>
+        <div class="part-option-art">${esc(part.article)}</div>
+      </div>
+      ${S.selectedPart && S.selectedPart.id === part.id ? '<div class="part-option-check">&#10003;</div>' : ""}
+    </div>
+  `).join("");
+}
+
+function selectPart(id) {
+  S.selectedPart = S.parts.find(part => part.id === id) || null;
+  filterParts();
+}
+
+function adjustModalQty(delta) {
+  const el = document.getElementById("modal-qty");
+  el.value = Math.max(1, (parseInt(el.value, 10) || 0) + delta);
+}
+
+function addPartToSlot() {
+  if (!S.selectedPart) return;
+  const qty = parseInt(document.getElementById("modal-qty").value, 10) || 0;
+  if (qty < 1) {
+    showToast(t("errors.minQuantity"), "err");
+    return;
+  }
+  const existing = S.modalParts.find(part => part.partId === S.selectedPart.id);
+  if (existing) {
+    existing.quantity += qty;
+  } else {
+    S.modalParts.push({
+      partId: S.selectedPart.id,
+      name: S.selectedPart.name,
+      article: S.selectedPart.article,
+      quantity: qty
+    });
+  }
+  renderSlotParts();
+  S.selectedPart = null;
+  S.search = "";
+  document.getElementById("part-search").value = "";
+  document.getElementById("modal-qty").value = "50";
+  document.getElementById("btn-add-part").disabled = true;
+  renderPartDropdown(S.parts);
+}
+
+function removeFromModal(index) {
+  S.modalParts.splice(index, 1);
+  renderSlotParts();
+}
+
+function renderSlotParts() {
+  const el = document.getElementById("slot-parts-list");
+  if (!el) return;
+  if (!S.modalParts.length) {
+    el.innerHTML = `<div class="empty-state">${esc(t("modal.emptySlot"))}</div>`;
+    return;
+  }
+  el.innerHTML = S.modalParts.map((part, index) => `
+    <div class="slot-part-row">
+      <div class="slot-part-info">
+        <div class="slot-part-name">${esc(part.name)}</div>
+        <div class="slot-part-art">${esc(part.article)}</div>
+      </div>
+      <div class="slot-part-qty">${part.quantity}x</div>
+      <button class="btn-danger" type="button" onclick="removeFromModal(${index})">${esc(t("partsAdmin.delete"))}</button>
+    </div>
+  `).join("");
+}
+
+function saveSlot() {
+  S.slots[S.editSlot] = S.modalParts;
+  renderSlotGrid();
+  const slotId = S.editSlot;
+  closeModal();
+  showToast(formatText("toast.slotSaved", { slot: slotId }));
+}
+
+let toastTimer;
+function showToast(msg, type = "ok") {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast " + type + " show";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
+}
+
+async function init() {
+  S.slots = emptySlots();
+  let savedLanguage = "nl";
+  try {
+    savedLanguage = localStorage.getItem("uiLanguage") || "nl";
+  } catch (error) {}
+  savedLanguage = I18N[savedLanguage] ? savedLanguage : "nl";
+  document.getElementById("language-select").value = savedLanguage;
+  togglePartCapabilityInputs();
+  setLanguage(savedLanguage);
+  try {
+    await Promise.all([loadConfig(), loadParts(), loadBatches()]);
+    updateBatchFormMode();
+  } catch (error) {
+    showToast(error.message, "err");
+  }
+}
+init();
+</script>
+</body>
+</html>

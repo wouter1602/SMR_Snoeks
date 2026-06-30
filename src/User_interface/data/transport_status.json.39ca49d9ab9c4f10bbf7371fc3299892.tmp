@@ -1,0 +1,158 @@
+{
+  "status": "aborted",
+  "message": "No Arduino connection available.",
+  "updatedAt": "2026-06-26T15:10:03",
+  "events": [
+    {
+      "time": "2026-06-26T15:09:55",
+      "line": "[PICK] Batch F52454A1 gestart - go-nogo",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:55",
+      "line": "[TRANSPORT] transport.py gestart met PID 35556",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:55",
+      "line": "[MAIN_CONTROL] main_control.py gestart met PID 9256",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:56",
+      "line": "[TRANSPORT] Starting batch F52454A1 with 7 hopper command(s).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:56",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Wachten 10 seconden voor start sequence...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:56",
+      "line": "[TRANSPORT] ARDUINO_PORTS not configured. Scanning serial ports for Arduinos.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:57",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over 10s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:58",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  9s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:09:59",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  8s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:10:00",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  7s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:10:01",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  6s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:10:02",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  5s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T15:10:03",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  4s",
+      "level": "info"
+    }
+  ],
+  "operatorNote": "",
+  "batchId": "F52454A1",
+  "batchName": "go-nogo",
+  "currentIndex": null,
+  "totalCommands": 7,
+  "completedCommands": 0,
+  "failedCommands": 0,
+  "commands": [
+    {
+      "index": 0,
+      "arduinoId": 1,
+      "hopperNumber": 1,
+      "hopper": "S-1",
+      "buffer": "A1",
+      "article": "P000042538",
+      "quantity": 2,
+      "command": "1-1-2",
+      "status": "waiting"
+    },
+    {
+      "index": 1,
+      "arduinoId": 1,
+      "hopperNumber": 2,
+      "hopper": "S-2",
+      "buffer": "A1",
+      "article": "830088",
+      "quantity": 2,
+      "command": "1-2-2",
+      "status": "waiting"
+    },
+    {
+      "index": 2,
+      "arduinoId": 1,
+      "hopperNumber": 1,
+      "hopper": "S-1",
+      "buffer": "A4",
+      "article": "P000042538",
+      "quantity": 2,
+      "command": "1-1-2",
+      "status": "waiting"
+    },
+    {
+      "index": 3,
+      "arduinoId": 1,
+      "hopperNumber": 1,
+      "hopper": "S-1",
+      "buffer": "B3",
+      "article": "P000042538",
+      "quantity": 2,
+      "command": "1-1-2",
+      "status": "waiting"
+    },
+    {
+      "index": 4,
+      "arduinoId": 2,
+      "hopperNumber": 16,
+      "hopper": "W-1",
+      "buffer": "B4",
+      "article": "830491",
+      "quantity": 5,
+      "command": "2-16-5",
+      "status": "waiting"
+    },
+    {
+      "index": 5,
+      "arduinoId": 2,
+      "hopperNumber": 17,
+      "hopper": "W-2",
+      "buffer": "B4",
+      "article": "830754",
+      "quantity": 2,
+      "command": "2-17-2",
+      "status": "waiting"
+    },
+    {
+      "index": 6,
+      "arduinoId": 1,
+      "hopperNumber": 2,
+      "hopper": "S-2",
+      "buffer": "C2",
+      "article": "830088",
+      "quantity": 8,
+      "command": "1-2-8",
+      "status": "waiting"
+    }
+  ]
+}

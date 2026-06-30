@@ -1,0 +1,560 @@
+[
+  {
+    "id": "2070BAE1",
+    "name": "br",
+    "created": "30-06-2026",
+    "batchSize": 100,
+    "slots": {
+      "A1": [],
+      "A2": [],
+      "A3": [],
+      "A4": [
+        {
+          "partId": 16,
+          "name": "Bolt M10x30 HEX-HXW-10-ZPS",
+          "article": "P000038403",
+          "quantity": 1
+        }
+      ],
+      "B1": [],
+      "B2": [],
+      "B3": [],
+      "B4": [],
+      "C1": [],
+      "C2": [],
+      "C3": [],
+      "C4": []
+    },
+    "partCount": 1,
+    "totalQty": 1
+  },
+  {
+    "id": "08AB8545",
+    "name": "the final V2",
+    "created": "30-06-2026",
+    "batchSize": 100,
+    "slots": {
+      "A1": [],
+      "A2": [],
+      "A3": [],
+      "A4": [
+        {
+          "partId": 5,
+          "name": "Washer 13x4/30 FLT-ST-ZPS",
+          "article": "830495",
+          "quantity": 10
+        }
+      ],
+      "B1": [],
+      "B2": [],
+      "B3": [],
+      "B4": [],
+      "C1": [],
+      "C2": [],
+      "C3": [],
+      "C4": []
+    },
+    "partCount": 1,
+    "totalQty": 10
+  },
+  {
+    "id": "BD058826",
+    "name": "the final batch",
+    "created": "30-06-2026",
+    "batchSize": 1,
+    "slots": {
+      "A1": [
+        {
+          "article": "P000042538",
+          "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+          "partId": 20,
+          "quantity": 2
+        },
+        {
+          "article": "830088",
+          "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+          "partId": 1,
+          "quantity": 2
+        },
+        {
+          "article": "830491",
+          "name": "Washer 10,5x4/25 FLT-ST-ZPS",
+          "partId": 4,
+          "quantity": 5
+        }
+      ],
+      "A2": [
+        {
+          "partId": 30,
+          "name": "Cap-small",
+          "article": "888",
+          "quantity": 2
+        }
+      ],
+      "A3": [],
+      "A4": [
+        {
+          "article": "P000042538",
+          "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+          "partId": 20,
+          "quantity": 3
+        }
+      ],
+      "B1": [],
+      "B2": [],
+      "B3": [
+        {
+          "article": "830088",
+          "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+          "partId": 1,
+          "quantity": 8
+        }
+      ],
+      "B4": [],
+      "C1": [],
+      "C2": [
+        {
+          "article": "830491",
+          "name": "Washer 10,5x4/25 FLT-ST-ZPS",
+          "partId": 4,
+          "quantity": 10
+        }
+      ],
+      "C3": [
+        {
+          "partId": 31,
+          "name": "VW-cap",
+          "article": "VW-cap",
+          "quantity": 2
+        }
+      ],
+      "C4": []
+    },
+    "partCount": 8,
+    "totalQty": 34
+  },
+  {
+    "id": "159EE20C",
+    "name": "2026",
+    "created": "29-06-2026",
+    "batchSize": 100,
+    "slots": {
+      "A1": [],
+      "A2": [
+        {
+          "partId": 32,
+          "name": "Vilt",
+          "article": "Vilt",
+          "quantity": 2
+        }
+      ],
+      "A3": [],
+      "A4": [],
+      "B1": [],
+      "B2": [],
+      "B3": [],
+      "B4": [],
+      "C1": [],
+      "C2": [],
+      "C3": [],
+      "C4": []
+    },
+    "partCount": 1,
+    "totalQty": 2
+  },
+  {
+    "id": "C8A02807",
+    "name": "Go-nogo-V2",
+    "created": "24-06-2026",
+    "batchSize": 1,
+    "slots": {
+      "A1": [],
+      "A2": [
+        {
+          "article": "VW-cap",
+          "name": "VW-cap",
+          "partId": 31,
+          "quantity": 2
+        },
+        {
+          "article": "Vilt",
+          "name": "Vilt",
+          "partId": 32,
+          "quantity": 2
+        }
+      ],
+      "A3": [],
+      "A4": [
+        {
+          "partId": 20,
+          "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+          "article": "P000042538",
+          "quantity": 3
+        },
+        {
+          "partId": 1,
+          "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+          "article": "830088",
+          "quantity": 3
+        }
+      ],
+      "B1": [
+        {
+          "article": "888",
+          "name": "Cap-small",
+          "partId": 30,
+          "quantity": 2
+        }
+      ],
+      "B2": [
+        {
+          "article": "888",
+          "name": "Cap-small",
+          "partId": 30,
+          "quantity": 1
+        }
+      ],
+      "B3": [],
+      "B4": [],
+      "C1": [],
+      "C2": [],
+      "C3": [
+        {
+          "article": "Cap-big",
+          "name": "Cap-big",
+          "partId": 33,
+          "quantity": 2
+        }
+      ],
+      "C4": []
+    },
+    "partCount": 7,
+    "totalQty": 15
+  },
+  {
+    "id": "F52454A1",
+    "name": "go-nogo",
+    "created": "23-06-2026",
+    "batchSize": 2,
+    "slots": {
+      "A1": [
+        {
+          "article": "P000042538",
+          "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+          "partId": 20,
+          "quantity": 2
+        },
+        {
+          "article": "830088",
+          "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+          "partId": 1,
+          "quantity": 2
+        }
+      ],
+      "A2": [],
+      "A3": [],
+      "A4": [
+        {
+          "article": "P000042538",
+          "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+          "partId": 20,
+          "quantity": 2
+        }
+      ],
+      "B1": [],
+      "B2": [],
+      "B3": [
+        {
+          "article": "P000042538",
+          "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+          "partId": 20,
+          "quantity": 2
+        }
+      ],
+      "B4": [
+        {
+          "article": "830491",
+          "name": "Washer 10,5x4/25 FLT-ST-ZPS",
+          "partId": 4,
+          "quantity": 5
+        }
+      ],
+      "C1": [],
+      "C2": [
+        {
+          "article": "830088",
+          "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+          "partId": 1,
+          "quantity": 8
+        }
+      ],
+      "C3": [],
+      "C4": []
+    },
+    "partCount": 6,
+    "totalQty": 21
+  },
+  {
+    "id": "D3D8F104",
+    "name": "P000034662 - P000034662 - Inst. set DC X82 P2 21 DS",
+    "created": "02-06-2026",
+    "batchSize": 12,
+    "slots": {
+      "A1": [
+        {
+          "article": "830450",
+          "name": "Screw ST3,9x25 SSM-PAW-XPH-ST-DSB",
+          "partId": 27,
+          "quantity": 2
+        }
+      ],
+      "A2": [
+        {
+          "article": "830470",
+          "name": "Washer 8,4x1,5/30 FLT-ST-ZPS",
+          "partId": 28,
+          "quantity": 1
+        }
+      ],
+      "A3": [
+        {
+          "article": "P100002815",
+          "name": "Cover 12x18 HSQ-PP-BLK (X82 Step-in-set)",
+          "partId": 26,
+          "quantity": 2
+        }
+      ],
+      "A4": [
+        {
+          "article": "831490",
+          "name": "Plug 8x35/2-27(19x1,5) CSP-NY-GRL",
+          "partId": 10,
+          "quantity": 6
+        }
+      ],
+      "B1": [
+        {
+          "article": "830830",
+          "name": "Plug 8x18/1,6-8 CDP-PM-BLK(STAR/Assy)",
+          "partId": 23,
+          "quantity": 4
+        }
+      ],
+      "B2": [
+        {
+          "article": "831491",
+          "name": "Plug 4x32,5(24x4) CSI-NY-7030",
+          "partId": 25,
+          "quantity": 2
+        }
+      ],
+      "B3": [
+        {
+          "article": "P000043272",
+          "name": "Z-profile Cap X82 (IM)",
+          "partId": 29,
+          "quantity": 1
+        }
+      ],
+      "B4": [
+        {
+          "article": "831981",
+          "name": "Plug 4x32,5(24x4) CSI-NY-BLK",
+          "partId": 11,
+          "quantity": 4
+        }
+      ],
+      "C1": [
+        {
+          "article": "830834",
+          "name": "Plug 7x22/3-16(16x2) RBD-NY-BLK",
+          "partId": 24,
+          "quantity": 2
+        }
+      ],
+      "C2": [
+        {
+          "article": "831009",
+          "name": "Cover 8x6/22 CAP-NY-9004 (C-Cap)",
+          "partId": 9,
+          "quantity": 6
+        }
+      ],
+      "C3": [
+        {
+          "article": "831008",
+          "name": "Cover 8x6/22 WCH-NY-9004 (C-Washer)",
+          "partId": 8,
+          "quantity": 6
+        }
+      ],
+      "C4": []
+    },
+    "partCount": 11,
+    "totalQty": 36
+  },
+  {
+    "id": "0F1F4DE2",
+    "name": "P000036155 - P000036155 - Inst. Set Caddy 5 Flex L1",
+    "created": "02-06-2026",
+    "batchSize": 5,
+    "slots": {
+      "A1": [
+        {
+          "article": "832165",
+          "name": "B-Rivet 7,8x20,5/16x2,5 BGR-DO-AL-WTH",
+          "partId": 13,
+          "quantity": 200
+        }
+      ],
+      "A2": [
+        {
+          "article": "830088",
+          "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+          "partId": 1,
+          "quantity": 1000
+        },
+        {
+          "article": "P100000192",
+          "name": "Plug 8x18/1,5-8 CDP-PM-BLK(SNOEKS/Assy)",
+          "partId": 21,
+          "quantity": 300
+        }
+      ],
+      "A3": [
+        {
+          "article": "831008",
+          "name": "Cover 8x6/22 WCH-NY-9004 (C-Washer)",
+          "partId": 8,
+          "quantity": 200
+        },
+        {
+          "article": "831009",
+          "name": "Cover 8x6/22 CAP-NY-9004 (C-Cap)",
+          "partId": 9,
+          "quantity": 200
+        }
+      ],
+      "A4": [
+        {
+          "article": "831490",
+          "name": "Plug 8x35/2-27(19x1,5) CSP-NY-GRL",
+          "partId": 10,
+          "quantity": 200
+        },
+        {
+          "article": "831981",
+          "name": "Plug 4x32,5(24x4) CSI-NY-BLK",
+          "partId": 11,
+          "quantity": 200
+        }
+      ],
+      "B1": [
+        {
+          "article": "832110",
+          "name": "Bolt M8x25 HEX-HXN-10-ZFS",
+          "partId": 12,
+          "quantity": 1000
+        },
+        {
+          "article": "P000036407",
+          "name": "Washer 8,4x1,5/20 FLT-A2-WTH",
+          "partId": 14,
+          "quantity": 800
+        },
+        {
+          "article": "P000038354",
+          "name": "Lashing eye Caddy 5 Flex",
+          "partId": 15,
+          "quantity": 100
+        }
+      ],
+      "B2": [
+        {
+          "article": "830132",
+          "name": "Bolt M10x40 HEX-HXN-88-ZPS",
+          "partId": 2,
+          "quantity": 200
+        },
+        {
+          "article": "P000038404",
+          "name": "Bolt UNF7/16\"x1\" HEX-HXW-10-ZPB",
+          "partId": 17,
+          "quantity": 200
+        }
+      ],
+      "B3": [
+        {
+          "article": "830491",
+          "name": "Washer 10,5x4/25 FLT-ST-ZPS",
+          "partId": 4,
+          "quantity": 200
+        },
+        {
+          "article": "830754",
+          "name": "Washer 7x2/25 FLT-ST-PWD",
+          "partId": 7,
+          "quantity": 400
+        }
+      ],
+      "B4": [
+        {
+          "article": "830495",
+          "name": "Washer 13x4/30 FLT-ST-ZPS",
+          "partId": 5,
+          "quantity": 200
+        },
+        {
+          "article": "830749",
+          "name": "Washer 9x3/28 FLT-ST-ZPS",
+          "partId": 6,
+          "quantity": 400
+        },
+        {
+          "article": "P000038406",
+          "name": "Bolt M8x20 OTH-OTH-48-BLC (BallJoint)",
+          "partId": 18,
+          "quantity": 100
+        },
+        {
+          "article": "P000042390",
+          "name": "Plug 50x61/M8x28/1-15 DVB-RB-BLK",
+          "partId": 19,
+          "quantity": 200
+        }
+      ],
+      "C1": [
+        {
+          "article": "P000038403",
+          "name": "Bolt M10x30 HEX-HXW-10-ZPS",
+          "partId": 16,
+          "quantity": 1000
+        }
+      ],
+      "C2": [],
+      "C3": [],
+      "C4": [
+        {
+          "article": "830232",
+          "name": "Nut M6/High LNN-S8-ZPS",
+          "partId": 3,
+          "quantity": 300
+        },
+        {
+          "article": "P000042538",
+          "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+          "partId": 20,
+          "quantity": 300
+        },
+        {
+          "article": "P000038969",
+          "name": "Washer 8x3/15 FLT-RB-BLK",
+          "partId": 22,
+          "quantity": 300
+        }
+      ]
+    },
+    "partCount": 22,
+    "totalQty": 8000
+  }
+]

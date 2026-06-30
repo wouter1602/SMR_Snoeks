@@ -1,0 +1,77 @@
+{
+  "status": "idle",
+  "commands": [],
+  "events": [
+    {
+      "time": "2026-06-30T12:02:11",
+      "line": "[PICK] Batch F52454A1 gestart - go-nogo",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:11",
+      "line": "[TRANSPORT] transport.py gestart met PID 36796",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:11",
+      "line": "[MAIN_CONTROL] main_control.py gestart met PID 11684",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:11",
+      "line": "[TRANSPORT] Starting batch F52454A1 with 6 hopper command(s).",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:11",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Wachten 10 seconden voor start sequence...",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:11",
+      "line": "[TRANSPORT] ARDUINO_PORTS not configured. Scanning serial ports for Arduinos.",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:12",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over 10s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:13",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  9s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:14",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  8s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:15",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  7s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:16",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  6s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:17",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  5s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:18",
+      "line": "[MAIN_CONTROL] [MAIN_CONTROL] Start over  4s",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-30T12:02:18",
+      "line": "[TRANSPORT] No Arduino controllers responded.",
+      "level": "info"
+    }
+  ],
+  "updatedAt": "2026-06-30T12:02:18"
+}

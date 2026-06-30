@@ -1,0 +1,8 @@
+# Generated hopper sequence
+# buffer hopper id count article name
+ A4    S-1  id=1   count=2      P000042538    Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH
+ B4    W-1  id=16  count=5      830491        Washer 10,5x4/25 FLT-ST-ZPS
+ B3    S-1  id=1   count=2      P000042538    Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH
+ C2    S-2  id=2   count=8      830088        Bolt M6x15 SOC-SOL-HXS-88-ZNB
+ A1    S-1  id=1   count=2      P000042538    Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH
+ A1    S-2  id=2   count=2      830088        Bolt M6x15 SOC-SOL-HXS-88-ZNB

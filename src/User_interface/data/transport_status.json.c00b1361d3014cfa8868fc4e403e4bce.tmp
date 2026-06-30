@@ -1,0 +1,22 @@
+{
+  "status": "idle",
+  "commands": [],
+  "events": [
+    {
+      "time": "2026-06-26T14:47:48",
+      "line": "[PICK] Batch F52454A1 gestart - go-nogo",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T14:47:48",
+      "line": "[TRANSPORT] transport.py gestart met PID 41068",
+      "level": "info"
+    },
+    {
+      "time": "2026-06-26T14:47:48",
+      "line": "[TRANSPORT] Starting batch F52454A1 with 7 hopper command(s).",
+      "level": "info"
+    }
+  ],
+  "updatedAt": "2026-06-26T14:47:48"
+}

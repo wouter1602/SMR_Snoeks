@@ -1,0 +1,338 @@
+[
+  {
+    "id": 13,
+    "name": "B-Rivet 7,8x20,5/16x2,5 BGR-DO-AL-WTH",
+    "article": "832165",
+    "allowedHopperTypes": [
+      "smallBolts",
+      "mediumBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 9
+  },
+  {
+    "id": 16,
+    "name": "Bolt M10x30 HEX-HXW-10-ZPS",
+    "article": "P000038403",
+    "allowedHopperTypes": [
+      "largeBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 34
+  },
+  {
+    "id": 2,
+    "name": "Bolt M10x40 HEX-HXN-88-ZPS",
+    "article": "830132",
+    "allowedHopperTypes": [
+      "largeBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 32
+  },
+  {
+    "id": 20,
+    "name": "Bolt M6x11(8x25) SHB-SOL-HXS-A2-WTH",
+    "article": "P000042538",
+    "allowedHopperTypes": [
+      "smallBolts",
+      "mediumBolts",
+      "largeBolts",
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 17
+  },
+  {
+    "id": 1,
+    "name": "Bolt M6x15 SOC-SOL-HXS-88-ZNB",
+    "article": "830088",
+    "allowedHopperTypes": [
+      "smallBolts",
+      "mediumBolts",
+      "largeBolts",
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 5
+  },
+  {
+    "id": 18,
+    "name": "Bolt M8x20 OTH-OTH-48-BLC (BallJoint)",
+    "article": "P000038406",
+    "allowedHopperTypes": [
+      "mediumBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 15
+  },
+  {
+    "id": 12,
+    "name": "Bolt M8x25 HEX-HXN-10-ZFS",
+    "article": "832110",
+    "allowedHopperTypes": [
+      "largeBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 13
+  },
+  {
+    "id": 17,
+    "name": "Bolt UNF7/16\"x1\" HEX-HXW-10-ZPB",
+    "article": "P000038404",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 31
+  },
+  {
+    "id": 33,
+    "name": "Cap-big",
+    "article": "Cap-big",
+    "allowedHopperTypes": [],
+    "handlingMethod": "robotarm",
+    "weightGrams": 10
+  },
+  {
+    "id": 30,
+    "name": "Cap-small",
+    "article": "888",
+    "allowedHopperTypes": [],
+    "handlingMethod": "robotarm",
+    "weightGrams": 2.97
+  },
+  {
+    "id": 26,
+    "name": "Cover 12x18 HSQ-PP-BLK (X82 Step-in-set)",
+    "article": "P100002815",
+    "allowedHopperTypes": [],
+    "handlingMethod": "robotarm",
+    "weightGrams": 0
+  },
+  {
+    "id": 9,
+    "name": "Cover 8x6/22 CAP-NY-9004 (C-Cap)",
+    "article": "831009",
+    "allowedHopperTypes": [],
+    "handlingMethod": "robotarm",
+    "weightGrams": 0
+  },
+  {
+    "id": 8,
+    "name": "Cover 8x6/22 WCH-NY-9004 (C-Washer)",
+    "article": "831008",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 0
+  },
+  {
+    "id": 15,
+    "name": "Lashing eye Caddy 5 Flex",
+    "article": "P000038354",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 58
+  },
+  {
+    "id": 3,
+    "name": "Nut M6/High LNN-S8-ZPS",
+    "article": "830232",
+    "allowedHopperTypes": [
+      "smallBolts",
+      "mediumBolts",
+      "largeBolts",
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 3
+  },
+  {
+    "id": 25,
+    "name": "Plug 4x32,5(24x4) CSI-NY-7030",
+    "article": "831491",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 1
+  },
+  {
+    "id": 11,
+    "name": "Plug 4x32,5(24x4) CSI-NY-BLK",
+    "article": "831981",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 0
+  },
+  {
+    "id": 19,
+    "name": "Plug 50x61/M8x28/1-15 DVB-RB-BLK",
+    "article": "P000042390",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 22
+  },
+  {
+    "id": 24,
+    "name": "Plug 7x22/3-16(16x2) RBD-NY-BLK",
+    "article": "830834",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 0
+  },
+  {
+    "id": 21,
+    "name": "Plug 8x18/1,5-8 CDP-PM-BLK(SNOEKS/Assy)",
+    "article": "P100000192",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 1
+  },
+  {
+    "id": 23,
+    "name": "Plug 8x18/1,6-8 CDP-PM-BLK(STAR/Assy)",
+    "article": "830830",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 0
+  },
+  {
+    "id": 10,
+    "name": "Plug 8x35/2-27(19x1,5) CSP-NY-GRL",
+    "article": "831490",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 2
+  },
+  {
+    "id": 27,
+    "name": "Screw ST3,9x25 SSM-PAW-XPH-ST-DSB",
+    "article": "830450",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 2
+  },
+  {
+    "id": 32,
+    "name": "Vilt",
+    "article": "Vilt",
+    "allowedHopperTypes": [],
+    "handlingMethod": "robotarm",
+    "weightGrams": 2
+  },
+  {
+    "id": 31,
+    "name": "VW-cap",
+    "article": "VW-cap",
+    "allowedHopperTypes": [],
+    "handlingMethod": "robotarm",
+    "weightGrams": 12
+  },
+  {
+    "id": 4,
+    "name": "Washer 10,5x4/25 FLT-ST-ZPS",
+    "article": "830491",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 11
+  },
+  {
+    "id": 5,
+    "name": "Washer 13x4/30 FLT-ST-ZPS",
+    "article": "830495",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 17
+  },
+  {
+    "id": 7,
+    "name": "Washer 7x2/25 FLT-ST-PWD",
+    "article": "830754",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 7
+  },
+  {
+    "id": 14,
+    "name": "Washer 8,4x1,5/20 FLT-A2-WTH",
+    "article": "P000036407",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 3
+  },
+  {
+    "id": 28,
+    "name": "Washer 8,4x1,5/30 FLT-ST-ZPS",
+    "article": "830470",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 6
+  },
+  {
+    "id": 22,
+    "name": "Washer 8x3/15 FLT-RB-BLK",
+    "article": "P000038969",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 0
+  },
+  {
+    "id": 6,
+    "name": "Washer 9x3/28 FLT-ST-ZPS",
+    "article": "830749",
+    "allowedHopperTypes": [
+      "washers"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": 10
+  },
+  {
+    "id": 29,
+    "name": "Z-profile Cap X82 (IM)",
+    "article": "P000043272",
+    "allowedHopperTypes": [],
+    "handlingMethod": "robotarm",
+    "weightGrams": 1
+  },
+  {
+    "id": 34,
+    "name": "bolt m6",
+    "article": "q",
+    "allowedHopperTypes": [
+      "smallBolts"
+    ],
+    "handlingMethod": "hopper",
+    "weightGrams": null
+  }
+]
