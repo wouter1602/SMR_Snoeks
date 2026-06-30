@@ -239,3 +239,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+src/camera-Sam3/sam3/Miniconda3-latest-Linux-x86_64.sh
