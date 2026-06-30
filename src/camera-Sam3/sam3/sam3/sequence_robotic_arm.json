@@ -1,0 +1,18 @@
+[
+  {
+    "tray": "A2",
+    "part": "Cap-small",
+    "count": 2,
+    "retries": 3,
+    "drop_pose": "A2",
+    "doosan_sequence": "pick_and_place"
+  },
+  {
+    "tray": "C3",
+    "part": "VW-cap",
+    "count": 2,
+    "retries": 3,
+    "drop_pose": "C3",
+    "doosan_sequence": "pick_and_place"
+  }
+]

@@ -1,0 +1,791 @@
+#!/usr/bin/env python3
+"""
+Doosan main control script — TCP server for SMA3.
+
+Everything that moves is described in poses_V2.json. Python only knows
+how to *execute* step types; it never hard-codes coordinates.
+
+Protocol (SMA3 → Doosan):
+    pick:X,Y,Z,yaw,gripper     store next pick target (mm, deg)
+    drop_pose:<pose_name>      store next drop pose (NAMED pose from JSON)
+    run:<sequence_name>        execute a JSON sequence
+    home                       go to home pose
+    move:X,Y,Z,yaw,speed       raw linear move (default orientation)
+    posx:X,Y,Z,Rx,Ry,Rz,speed  raw linear move with full ZYZ
+    close_gripper:<g>          activate gripper (suction on / parallel close)
+    open_gripper:<g>           release gripper
+    quit | exit | shutdown     stop the server
+
+Doosan → SMA3:
+    doosan_ready
+    sequences:a,b,c,...
+    ack:pick | ack:drop_pose
+    started:<name>
+    done:<name>
+    error:<context>:<detail>
+
+JSON step types understood by run_sequence():
+    pose                  fixed pose by name
+    sequence              call another named sequence
+    wait                  sleep N seconds
+    air                   toggle a digital output
+    wait_for_user_input   blocking stdin prompt
+    place_down            existing force-down behaviour
+    calibrate             existing calibration behaviour
+    home                  shortcut for the configured home pose
+
+    ── Dynamic steps (use info received from SMA3) ──
+    dynamic_pose          move to _last_pick + offsets
+                          fields: source ("pick" — only pick is dynamic)
+                                  dz, dx, dy   (mm, optional, default 0)
+                                  rx, ry, rz   (deg, optional, default to
+                                                DEFAULT_RX/RY/RZ below)
+                                  move_type    ("linear" default, or "joint")
+                                  max_speed    (optional)
+    drop_pose             execute the named pose stored in _last_drop_pose
+                          fields: dz           (optional Z offset, mm)
+                                  move_type    (optional override)
+                                  max_speed    (optional)
+    gripper_close         close gripper for _last_pick.gripper
+                          (or override with "gripper": "suction"|"parallel")
+    gripper_open          open gripper for _last_pick.gripper
+                          (or override with "gripper")
+"""
+from __future__ import annotations
+from typing import Optional
+import multiprocessing as mp
+import logging
+import asyncio
+import signal
+import numpy as np
+import sys
+import json
+import copy
+from pathlib import Path
+
+import doosan_drfl as drfl
+from robot_worker import robot_worker, MOVE_TIMEOUT, POLL_INTERVAL
+from comm import Link
+print("ROBOT_CONTROL members:", [a for a in dir(drfl.ROBOT_CONTROL) if not a.startswith("_")])
+print("DRFL attributes containing 'tool' or 'tcp':")
+for a in sorted(dir(drfl)):
+    if "tool" in a.lower() or "tcp" in a.lower():
+        print("  ", a)
+
+print("\n--- drfl.Tool ---")
+for a in sorted(dir(drfl.Tool)):
+    if not a.startswith("_"):
+        print("  ", a)
+
+print("\n--- drfl.TCP ---")
+for a in sorted(dir(drfl.TCP)):
+    if not a.startswith("_"):
+        print("  ", a)
+# ════════════════════════════════════════════════════════════════════════
+#  CONFIG — tweak here, not deep in the code
+# ════════════════════════════════════════════════════════════════════════
+IP_DOOSAN   = "192.168.0.50"
+PORT_DOOSAN = 12345
+
+TCP_HOST = "0.0.0.0"
+TCP_PORT = 9000
+TCP_CONNECT_TIMEOUT = 120
+
+CONFIG_FILE = "poses_V1.json"
+
+# Default tool orientation used by every dynamic_pose that doesn't
+# override rx/ry/rz.  Matches the SMA3 pick/place tool orientation.
+DEFAULT_RX = 171.35
+DEFAULT_RY = -137.40
+DEFAULT_RZ = -3.50
+
+# Default speeds / forces
+DOOSAN_SPEED                 = 20
+DOOSAN_ACCELERATION          = 20
+DOOSAN_LIN_SPEED             = 200
+DOOSAN_LIN_ACCELERATION      = 200
+DOOSAN_LIN_SPEED_SLOW        = 20
+DOOSAN_LIN_ACCELERATION_SLOW = 20
+
+FORCE_Z_AXIS_DOWN    = 50.0
+MAX_FORCE_BOX        = 7.0
+MAX_FORCE_PLACE_DOWN = 15.0
+
+# Air-valve mapping per gripper kind. Change indices to match wiring.
+GRIPPER_AIR = {
+    "suction":  drfl.GPIO_CTRLBOX_DIGITAL_INDEX.Index_1,
+    "parallel": drfl.GPIO_CTRLBOX_DIGITAL_INDEX.Index_2,
+}
+# What "close" means for each gripper (True = energise valve)
+GRIPPER_CLOSE_STATE = {"suction": True, "parallel": True}
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  LOGGING
+# ════════════════════════════════════════════════════════════════════════
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - [%(levelname)s] - %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  GLOBAL STATE
+# ════════════════════════════════════════════════════════════════════════
+_currently_moving:   bool                  = False
+_current_force_pose: Optional[np.ndarray]  = None
+_pickup_up:          Optional[np.ndarray]  = None
+
+# Latest pick + drop targets received from SMA3
+_last_pick:       Optional[dict] = None     # {"x","y","z","yaw","gripper"}
+_last_drop_pose:  Optional[str]  = None     # name of pose in poses_V2.json
+
+# Loaded poses dictionary — set in main(), used by dynamic step handlers
+_POSES: dict = {}
+
+# TCP plumbing (populated in main)
+_tcp_queue: Optional[asyncio.Queue]             = None
+_tcp_link:  Optional[Link]                      = None
+_loop_ref:  Optional[asyncio.AbstractEventLoop] = None
+
+
+class RetrySequenceError(Exception):
+    pass
+
+TCP_DEFINITIONS = {
+    "default": [0.0,    0.0,   0.0,   0.0, 0.0, 0.0],
+    "snoeks1":  [-43.032, 1.759, 93.887, 0.0, 0.0, 0.0],
+}
+DEFAULT_TCP_NAME = "default"
+
+_current_tcp_name: str = ""
+
+
+# Track currently-active tool client-side
+_current_tcp_name: str = "default"
+
+# Will be set in main() so set_tcp_active can reach the worker
+_command_queue = None
+_result_queue  = None
+
+
+async def set_tcp_active(name: str) -> bool:
+    """Tell the worker to switch tool. Returns True on success."""
+    global _current_tcp_name
+    if name == _current_tcp_name:
+        return True
+    if _command_queue is None or _result_queue is None:
+        logger.error("set_tcp_active called before worker is up")
+        return False
+
+    _command_queue.put(("set_tool", name))
+    loop = asyncio.get_running_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _result_queue.get),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"set_tool({name}) timed out")
+        return False
+
+    if result == "done":
+        _current_tcp_name = name
+        logger.info(f"Active TCP → {name}")
+        return True
+    logger.error(f"set_tool({name}) failed: {result}")
+    return False
+# ════════════════════════════════════════════════════════════════════════
+#  TCP plumbing
+# ════════════════════════════════════════════════════════════════════════
+def _on_tcp_message(msg: str) -> None:
+    """Runs in Link's background thread — hand off to asyncio."""
+    if _loop_ref is None or _tcp_queue is None:
+        return
+    logger.debug(f"[TCP] received: {msg}")
+    _loop_ref.call_soon_threadsafe(_tcp_queue.put_nowait, msg)
+
+
+def tcp_send(msg: str) -> None:
+    if _tcp_link and _tcp_link.is_connected():
+        _tcp_link.send(msg)
+    else:
+        logger.warning(f"[TCP] not connected, dropping: {msg}")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Low-level motion helpers
+# ════════════════════════════════════════════════════════════════════════
+async def wait_for_motion_complete(result_queue: mp.Queue,
+                                   timeout: float = MOVE_TIMEOUT) -> None:
+    global _currently_moving, _current_force_pose
+    loop = asyncio.get_running_loop()
+    _currently_moving = True
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, result_queue.get),
+            timeout=timeout,
+        )
+    finally:
+        _currently_moving = False
+
+    if isinstance(result, tuple) and len(result) == 2:
+        logger.debug(f"Stopped based on: {result[0]}. Result: {result[1]}")
+        _current_force_pose = result[1].copy()
+    elif result != "done":
+        raise RuntimeError(result)
+
+
+async def execute_pose(pose: dict,
+                       command_queue: mp.Queue,
+                       result_queue: mp.Queue) -> None:
+    """Send one pose dict to the worker and wait for completion."""
+    move_type = pose["move_type"]
+    if move_type not in ("joint", "linear", "force"):
+        logger.warning(f"Wrong move type: {move_type}")
+        return
+
+    logger.debug(f"Executing pose: {pose.get('name','?')} [{move_type}]  "
+                 f"{pose['pose_array']}")
+    pose_array = np.array(pose["pose_array"], dtype=np.float32)
+
+    if "max_force" in pose:
+        command_queue.put((move_type, pose_array, pose["max_force"]))
+    elif "max_speed" in pose:
+        spd = pose["max_speed"]
+        acc = pose.get("max_acc", spd)          # default acc = speed
+        command_queue.put((move_type, pose_array, (spd, acc)))   # ← tuple
+    else:
+        command_queue.put((move_type, pose_array))
+
+    try:
+        await wait_for_motion_complete(result_queue, MOVE_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.error("Move timed out")
+        command_queue.put(None)
+        raise SystemExit(1)
+    except RuntimeError as e:
+        logger.error(f"Motion error: {e}")
+        command_queue.put(None)
+        raise SystemExit(1)
+
+    logger.info(f"  ✓ reached: {pose.get('name','?')}")
+    await asyncio.sleep(POLL_INTERVAL)
+
+
+async def toggle_air(command_queue: mp.Queue,
+                     result_queue: mp.Queue,
+                     index: drfl.GPIO_CTRLBOX_DIGITAL_INDEX
+                            = drfl.GPIO_CTRLBOX_DIGITAL_INDEX.Index_1,
+                     output: Optional[bool] = None) -> None:
+    command_queue.put(("toggle_air", index, output))
+    await wait_for_motion_complete(result_queue)
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Dynamic-pose builders
+# ════════════════════════════════════════════════════════════════════════
+def _build_dynamic_pose(step: dict) -> dict:
+    """
+    Build a pose dict from a `dynamic_pose` step using the stored
+    `_last_pick` target.
+
+    New: if the step contains "max_force", the move is executed as a
+    force-controlled descent (move_type='force'). The Z value should be
+    set BELOW the expected contact point (e.g. dz: -15) so the force
+    threshold is what actually stops the motion.
+    """
+    src = step.get("source", "pick")
+    if src != "pick":
+        raise RuntimeError(
+            f"dynamic_pose only supports source='pick' "
+            f"(use 'drop_pose' step for drop). Got source={src!r}")
+
+    target = _last_pick
+    if target is None:
+        raise RuntimeError("dynamic_pose: no pick target received yet")
+
+    dx = float(step.get("dx", 0.0))
+    dy = float(step.get("dy", 0.0))
+    dz = float(step.get("dz", 0.0))
+    rx = float(step.get("rx", DEFAULT_RX))
+    ry = float(step.get("ry", DEFAULT_RY))
+    rz = float(step.get("rz", DEFAULT_RZ))
+
+    # If a force threshold is given, force-control the descent.
+    if "max_force" in step:
+        move_type = "force"
+        name_tag  = f"dyn:pick_force{dz:+.0f}"
+    else:
+        move_type = step.get("move_type", "linear")
+        name_tag  = f"dyn:pick{dz:+.0f}"
+
+    pose = {
+        "name": name_tag,
+        "move_type": move_type,
+        "pose_array": [
+            float(target["x"]) + dx,
+            float(target["y"]) + dy,
+            float(target["z"]) + dz,
+            rx, ry, rz,
+        ],
+    }
+    if "max_force" in step:
+        pose["max_force"] = float(step["max_force"])
+    if "max_speed" in step:
+        pose["max_speed"] = step["max_speed"]
+    return pose
+def _build_drop_pose_step(step: dict, poses: dict) -> dict:
+    """
+    Build a pose dict from a `drop_pose` step using the named pose
+    stored in `_last_drop_pose`. Optional `dz` offset is applied to Z.
+    """
+    if _last_drop_pose is None:
+        raise RuntimeError("drop_pose: no drop_pose received from SMA3 yet")
+    if _last_drop_pose not in poses:
+        raise RuntimeError(
+            f"drop_pose: pose '{_last_drop_pose}' not found in JSON")
+
+    pose = copy.deepcopy(poses[_last_drop_pose])
+    pose["pose_array"] = list(pose["pose_array"])
+
+    dz = float(step.get("dz", 0.0))
+    if dz:
+        pose["pose_array"][2] = float(pose["pose_array"][2]) + dz
+        pose["name"] = f"{_last_drop_pose}{dz:+.0f}"
+
+    if "move_type" in step:
+        pose["move_type"] = step["move_type"]
+    if "max_speed" in step:
+        pose["max_speed"] = step["max_speed"]
+    return pose
+
+
+def _resolve_gripper(step: dict) -> str:
+    g = step.get("gripper")
+    if g:
+        return g
+    if _last_pick and "gripper" in _last_pick:
+        return _last_pick["gripper"]
+    return "suction"
+
+
+async def _gripper_action(step: dict,
+                          close: bool,
+                          command_queue: mp.Queue,
+                          result_queue: mp.Queue) -> None:
+    g = _resolve_gripper(step)
+    if g not in GRIPPER_AIR:
+        raise RuntimeError(f"Unknown gripper kind: {g!r}")
+    idx = GRIPPER_AIR[g]
+    state = GRIPPER_CLOSE_STATE.get(g, True) if close else (
+        not GRIPPER_CLOSE_STATE.get(g, True))
+    logger.info(f"  Gripper {g} -> {'CLOSE' if close else 'OPEN'} "
+                f"(valve idx={idx}, state={state})")
+    await toggle_air(command_queue, result_queue, index=idx, output=state)
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  JSON I/O
+# ════════════════════════════════════════════════════════════════════════
+async def load_config(filepath) -> tuple[dict, Optional[str], dict]:
+    with open(filepath, "r") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        poses = {p["name"]: p for p in data}
+        return poses, None, {}
+    poses     = {p["name"]: p for p in data.get("poses", [])}
+    home      = data.get("home")
+    sequences = data.get("sequences", {})
+    return poses, home, sequences
+
+
+def _prompt(message: str) -> str:
+    return input(message)
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Sequence runner
+# ════════════════════════════════════════════════════════════════════════
+async def run_sequence(steps: list,
+                       poses: dict,
+                       sequences: dict,
+                       command_queue: mp.Queue,
+                       result_queue: mp.Queue,
+                       home_name: Optional[str] = None,
+                       visited: Optional[set] = None) -> None:
+    global _pickup_up
+    if visited is None:
+        visited = set()
+    loop = asyncio.get_running_loop()
+
+    for step in steps:
+        step_type = step.get("type")
+
+        # ── flow control ────────────────────────────────────────────
+        if step_type == "sequence":
+            name = step["name"]
+            if name not in sequences:
+                logger.error(f"Sequence '{name}' not found")
+                raise SystemExit(1)
+            if name in visited:
+                logger.error(f"Circular reference: {name} already in {visited}")
+                raise SystemExit(1)
+            logger.info(f"Sub-sequence: '{name}'")
+            await run_sequence(sequences[name], poses, sequences,
+                               command_queue, result_queue,
+                               home_name, visited | {name})
+
+        elif step_type == "wait":
+            seconds = float(step.get("seconds", 0))
+            logger.info(f"Wait {seconds}s …")
+            await asyncio.sleep(seconds)
+
+        elif step_type == "wait_for_user_input":
+            await loop.run_in_executor(
+                None, _prompt, step.get("message", "Press Enter…"))
+
+        # ── static poses ────────────────────────────────────────────
+        elif step_type == "pose":
+            name = step["name"]
+            if name not in poses:
+                logger.error(f"Pose '{name}' not found")
+                raise SystemExit(1)
+            await execute_pose(poses[name], command_queue, result_queue)
+
+        elif step_type == "home":
+            if not home_name or home_name not in poses:
+                logger.error("home step but no valid home in JSON")
+                raise SystemExit(1)
+            await execute_pose(poses[home_name], command_queue, result_queue)
+
+        # ── IO ───────────────────────────────────────────────────────
+        elif step_type == "air":
+            raw_idx = step.get("index", 1)
+            try:
+                idx = drfl.GPIO_CTRLBOX_DIGITAL_INDEX(raw_idx) \
+                    if raw_idx != 1 else drfl.GPIO_CTRLBOX_DIGITAL_INDEX.Index_1
+            except Exception:
+                idx = drfl.GPIO_CTRLBOX_DIGITAL_INDEX.Index_1
+            output = step.get("output", None)
+            await toggle_air(command_queue, result_queue, index=idx, output=output)
+
+        # ── existing extras ─────────────────────────────────────────
+        elif step_type == "place_down":
+            name = step["name"]
+            if name not in poses:
+                logger.error(f"Pose '{name}' not found")
+                raise SystemExit(1)
+            pose = copy.deepcopy(poses[name])
+            await execute_pose(pose, command_queue, result_queue)
+
+            coords = list(pose["pose_array"])
+            coords[2] -= FORCE_Z_AXIS_DOWN
+            pose_force = {
+                "name": "force down",
+                "pose_array": coords,
+                "move_type": "force",
+                "max_force": MAX_FORCE_PLACE_DOWN,
+            }
+            await execute_pose(pose_force, command_queue, result_queue)
+
+            coords = list(pose["pose_array"])
+            coords[2] += FORCE_Z_AXIS_DOWN * 2
+            _pickup_up = np.array(coords)
+
+        elif step_type == "calibrate":
+            name = step["name"]
+            if name not in poses:
+                logger.error(f"Pose '{name}' not found")
+                raise SystemExit(1)
+            pose = copy.deepcopy(poses[name])
+            await execute_pose(pose, command_queue, result_queue)
+            coords = list(pose["pose_array"])
+            coords[2] -= FORCE_Z_AXIS_DOWN
+            pose["pose_array"] = coords
+            pose["move_type"]  = "force"
+            pose["max_force"]  = MAX_FORCE_BOX
+            await asyncio.sleep(0.5)
+            await execute_pose(pose, command_queue, result_queue)
+
+        # ── dynamic steps (camera-driven) ───────────────────────────
+        elif step_type == "dynamic_pose":
+            pose = _build_dynamic_pose(step)
+            await execute_pose(pose, command_queue, result_queue)
+
+        elif step_type == "drop_pose":
+            pose = _build_drop_pose_step(step, poses)
+            await execute_pose(pose, command_queue, result_queue)
+
+        elif step_type == "gripper_close":
+            await _gripper_action(step, close=True,
+                                  command_queue=command_queue,
+                                  result_queue=result_queue)
+
+        elif step_type == "gripper_open":
+            await _gripper_action(step, close=False,
+                                  command_queue=command_queue,
+                                  result_queue=result_queue)
+
+        else:
+            logger.warning(f"Unknown step type '{step_type}', skipping")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  Direct TCP command helpers (for non-sequence commands)
+# ════════════════════════════════════════════════════════════════════════
+async def _do_move_raw(msg: str,
+                       command_queue: mp.Queue,
+                       result_queue: mp.Queue) -> None:
+    """move:X,Y,Z,yaw,speed   (raw linear, default orientation)."""
+    parts = msg.split(":", 1)[1].split(",")
+    x, y, z, yaw = (float(p) for p in parts[:4])
+    speed = float(parts[4]) if len(parts) > 4 else DOOSAN_LIN_SPEED
+    pose = {
+        "name": "move_raw",
+        "move_type": "linear",
+        "pose_array": [x, y, z, DEFAULT_RX, DEFAULT_RY, DEFAULT_RZ],
+        "max_speed": speed,
+    }
+    await execute_pose(pose, command_queue, result_queue)
+
+
+async def _do_posx_raw(msg: str,
+                       command_queue: mp.Queue,
+                       result_queue: mp.Queue) -> None:
+    """posx:X,Y,Z,Rx,Ry,Rz,speed   (raw linear, full ZYZ)."""
+    parts = msg.split(":", 1)[1].split(",")
+    x, y, z, rx, ry, rz = (float(p) for p in parts[:6])
+    speed = float(parts[6]) if len(parts) > 6 else DOOSAN_LIN_SPEED
+    pose = {
+        "name": "posx_raw",
+        "move_type": "linear",
+        "pose_array": [x, y, z, rx, ry, rz],
+        "max_speed": speed,
+    }
+    await execute_pose(pose, command_queue, result_queue)
+
+
+async def _go_home(poses: dict, home: Optional[str],
+                   command_queue: mp.Queue, result_queue: mp.Queue) -> None:
+    if not home or home not in poses:
+        raise RuntimeError("home pose not configured")
+    logger.info(f"→ HOME ({home})")
+    await execute_pose(poses[home], command_queue, result_queue)
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  MAIN
+# ════════════════════════════════════════════════════════════════════════
+async def main() -> None:
+    global _tcp_queue, _tcp_link, _loop_ref
+    global _last_pick, _last_drop_pose, _POSES
+
+    loop = asyncio.get_event_loop()
+    _loop_ref = loop
+    _tcp_queue = asyncio.Queue()
+
+    main_task = asyncio.current_task()
+
+    def _handle_sigint():
+        if _currently_moving:
+            logger.info("SIGINT: waiting for movement to finish…")
+        main_task.cancel()
+
+    loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+
+    # 1. Bring up TCP link first
+    _tcp_link = Link(role="server", host=TCP_HOST, port=TCP_PORT,
+                     on_message=_on_tcp_message)
+    _tcp_link.start()
+    logger.info(f"[TCP] waiting for SMA3 on {TCP_HOST}:{TCP_PORT} …")
+    connected = await loop.run_in_executor(
+        None, _tcp_link.wait_until_connected, TCP_CONNECT_TIMEOUT)
+    if not connected:
+        logger.error(f"[TCP] SMA3 did not connect in {TCP_CONNECT_TIMEOUT}s")
+        _tcp_link.stop()
+        raise SystemExit(1)
+    logger.info("[TCP] SMA3 connected.")
+
+    # 2. Load JSON
+    filepath = sys.argv[1] if len(sys.argv) > 1 else CONFIG_FILE
+    poses, home, sequences = await load_config(filepath)
+    _POSES = poses
+
+    # 3. Start robot worker
+    command_queue: mp.Queue = mp.Queue()
+    result_queue:  mp.Queue = mp.Queue()
+    worker = mp.Process(
+        target=robot_worker,
+        args=(command_queue, result_queue,
+              IP_DOOSAN, PORT_DOOSAN,
+              DOOSAN_SPEED, DOOSAN_ACCELERATION,
+              DOOSAN_LIN_SPEED, DOOSAN_LIN_ACCELERATION),
+        daemon=True,
+    )
+    worker.start()
+
+    result = await loop.run_in_executor(None, result_queue.get)
+    if result != "ready":
+        logger.error(f"Worker failed during setup: {result}")
+        worker.terminate()
+        tcp_send(f"error:worker_setup:{result}")
+        _tcp_link.stop()
+        raise SystemExit(1)
+    logger.info("--- Ready to Move ---")
+    global _command_queue, _result_queue
+    _command_queue = command_queue
+    _result_queue  = result_queue
+
+
+
+    available = sorted(sequences.keys())
+    logger.info(f"Available sequences: {available}")
+    await set_tcp_active("default")
+    tcp_send("doosan_ready")
+    tcp_send("sequences:" + ",".join(available))
+    #    # ── 4. One-time startup motion ──────────────────────────────────────
+    if "startup" in sequences:
+        logger.info("Running one-time startup sequence…")
+        await run_sequence(sequences["startup"], poses, sequences,
+                           command_queue, result_queue)
+    elif home and home in poses:
+        logger.info(f"Moving to home position: '{home}'")
+        await execute_pose(poses[home], command_queue, result_queue)
+
+    # 5. Announce
+    
+
+    # 6. TCP-driven loop
+    while True:
+        logger.info("[TCP] waiting for next command…")
+        msg = (await _tcp_queue.get()).strip()
+        if not msg:
+            continue
+
+        # quit -------------------------------------------------------
+        if msg.lower() in ("quit", "exit", "shutdown"):
+            logger.info("Quit requested.")
+            tcp_send("shutting_down")
+            break
+
+        # pick:X,Y,Z,yaw,gripper -------------------------------------
+        if msg.startswith("pick:"):
+            try:
+                payload = msg.split(":", 1)[1]
+                x, y, z, yaw, grip = payload.split(",")
+                _last_pick = {
+                    "x": float(x), "y": float(y), "z": float(z),
+                    "yaw": float(yaw), "gripper": grip.strip(),
+                }
+                logger.info(f"Stored pick target: {_last_pick}")
+                tcp_send("ack:pick")
+            except Exception as e:
+                tcp_send(f"error:pick_parse:{e}")
+            continue
+
+        # drop_pose:<name> -------------------------------------------
+        if msg.startswith("drop_pose:"):
+            name = msg.split(":", 1)[1].strip()
+            if name not in poses:
+                logger.warning(f"drop_pose unknown: '{name}'")
+                tcp_send(f"error:drop_pose:unknown:{name}")
+            else:
+                _last_drop_pose = name
+                logger.info(f"Stored drop pose: '{name}'")
+                tcp_send("ack:drop_pose")
+            continue
+
+        # home -------------------------------------------------------
+        if msg == "home":
+            try:
+                await _go_home(poses, home, command_queue, result_queue)
+                tcp_send("done:home")
+            except Exception as e:
+                tcp_send(f"error:home:{e}")
+            continue
+
+        # move:X,Y,Z,yaw,speed ---------------------------------------
+        if msg.startswith("move:"):
+            try:
+                await _do_move_raw(msg, command_queue, result_queue)
+                tcp_send("done:move")
+            except Exception as e:
+                tcp_send(f"error:move:{e}")
+            continue
+
+        # posx:X,Y,Z,Rx,Ry,Rz,speed ----------------------------------
+        if msg.startswith("posx:"):
+            try:
+                await _do_posx_raw(msg, command_queue, result_queue)
+                tcp_send("done:posx")
+            except Exception as e:
+                tcp_send(f"error:posx:{e}")
+            continue
+
+        # close_gripper:<g> / open_gripper:<g> -----------------------
+        if msg.startswith("close_gripper:") or msg.startswith("open_gripper:"):
+            close = msg.startswith("close_gripper:")
+            g = msg.split(":", 1)[1].strip()
+            try:
+                await _gripper_action({"gripper": g}, close=close,
+                                      command_queue=command_queue,
+                                      result_queue=result_queue)
+                tcp_send(f"done:{'close' if close else 'open'}_gripper")
+            except Exception as e:
+                tcp_send(f"error:gripper:{e}")
+            continue
+
+        # run:<sequence> ---------------------------------------------
+        if msg.startswith("run:"):
+            dest = msg.split(":", 1)[1].strip()
+            if dest not in sequences:
+                tcp_send(f"error:no_such_sequence:{dest}")
+                continue
+            logger.info(f"Starting sequence → '{dest}'")
+            tcp_send(f"started:{dest}")
+            try:
+                await run_sequence(sequences[dest], poses, sequences,
+                                   command_queue, result_queue,
+                                   home_name=home)
+            except SystemExit:
+                tcp_send(f"error:sequence_failed:{dest}")
+                raise
+            except Exception as e:
+                logger.error(f"Sequence '{dest}' crashed: {e}")
+                tcp_send(f"error:sequence_failed:{dest}:{e}")
+                continue
+            logger.info(f"Sequence '{dest}' complete.")
+            tcp_send(f"done:{dest}")
+            continue
+                # set_tcp:<name> --------------------------------------------
+        if msg.startswith("set_tcp:"):
+            name = msg.split(":", 1)[1].strip()
+            if name not in TCP_DEFINITIONS:
+                tcp_send(f"error:set_tcp:unknown:{name}")
+            else:
+                ok = await set_tcp_active(name)
+                tcp_send(f"ack:set_tcp:{name}" if ok else f"error:set_tcp:failed:{name}")
+            continue
+        logger.warning(f"[TCP] Unknown command: {msg}")
+        tcp_send(f"error:unknown_command:{msg}")
+
+    # 7. Shutdown
+    command_queue.put(None)
+    worker.join()
+    if _tcp_link:
+        _tcp_link.stop()
+    logger.info("Connection closed")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except asyncio.CancelledError:
+        logger.info("Keyboard interrupt, exiting…")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"System error: {e}")
+        sys.exit(1)

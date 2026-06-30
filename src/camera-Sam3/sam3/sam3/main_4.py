@@ -1,0 +1,2395 @@
+#!/usr/bin/python3
+"""
+sma3_main_combined.py  (v3)
+─────────────────────────────────────────────────────────────────────────────
+RealSense + ArUco + SAM3 detection, talking to the Doosan over TCP.
+
+v3 — per-gripper marker ORIENTATIONS as well as centres
+  * Each gripper still has its own marker CENTRES (because TCP offset
+    changes where the tip lands on each marker) AND now its own marker
+    ORIENTATIONS (because the parallel TCP is mounted 90° rotated wrt
+    the suction TCP, so the same physical pose of the flange has a
+    different ZYZ orientation when you teach it with a different tool).
+  * MARKER_ORIENTATIONS_BY_GRIPPER mirrors MARKER_CENTRES_BY_GRIPPER.
+  * Switching gripper now swaps BOTH dictionaries + the calibration file
+    + tells the Doosan to switch TCP.
+"""
+
+import cv2
+import numpy as np
+import pyrealsense2 as rs
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+import json
+import logging
+import os
+import threading
+import time
+
+import torch
+from scipy.ndimage import binary_erosion, distance_transform_edt
+from PIL import Image, ImageDraw
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
+
+from comm import Link
+import itertools
+import threading
+
+# Pending operator prompts: id -> {"event": Event, "answer": str | None,
+#                                  "allowed": tuple[str, ...]}
+_pending_prompts: dict[int, dict] = {}
+_pending_lock = threading.Lock()
+_prompt_id_counter = itertools.count(1)
+
+# ============================================================
+# 0)  LOGGING
+# ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - [%(levelname)s] - %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("sma3")
+from comm import Link
+import json, threading
+
+SMA3_CONTROL_HOST = "0.0.0.0"
+SMA3_CONTROL_PORT = 9100
+
+def _on_control_msg(line: str) -> None:
+    global sequence_running, sequence_thread
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError as e:
+        _ctrl_link.send(f"Error: bad json: {e}")
+        return
+
+    cmd = msg.get("cmd")
+
+    if cmd == "start_sequence":
+        jobs = msg.get("jobs", [])
+        with open(SEQUENCE_FILE, "w", encoding="utf-8") as f:
+            json.dump(jobs, f, indent=2, ensure_ascii=False)
+        _ctrl_link.send(f"Status: {len(jobs)} jobs ontvangen, "
+                        f"geschreven naar {SEQUENCE_FILE}")
+        if sequence_running:
+            _ctrl_link.send("Error: sequence already running")
+            return
+
+        def _runner():
+            global sequence_running
+            sequence_running = True
+            try:
+                run_sequence(SEQUENCE_FILE)
+                _ctrl_link.send("Done")
+            except Exception as e:
+                _ctrl_link.send(f"Error: {e}")
+            finally:
+                sequence_running = False
+
+        threading.Thread(target=_runner, name="sequence",
+                         daemon=True).start()
+        _ctrl_link.send("Status: sequence gestart")
+
+    elif cmd == "abort":
+        _ctrl_link.send("Status: abort ontvangen (nog niet geïmplementeerd)")
+
+    elif cmd == "prompt_reply":
+        # Reply from main_control to an operator_prompt we sent earlier.
+        pid    = msg.get("id")
+        answer = (msg.get("answer") or "").strip().lower()
+        with _pending_lock:
+            entry = _pending_prompts.get(pid)
+        if entry is None:
+            _ctrl_link.send(f"Status: prompt_reply for unknown id {pid!r} "
+                            f"(ignored)")
+            return
+        allowed = entry["allowed"]
+        if answer not in allowed:
+            _ctrl_link.send(
+                f"Status: prompt {pid} got {answer!r}, "
+                f"not in {list(allowed)} — ignoring, waiting again")
+            return
+        entry["answer"] = answer
+        entry["event"].set()
+
+    else:
+        _ctrl_link.send(f"Error: onbekend commando {cmd!r}")
+        
+_ctrl_link = Link(role="server",
+                  host=SMA3_CONTROL_HOST, port=SMA3_CONTROL_PORT,
+                  on_message=_on_control_msg)
+_ctrl_link.start()
+logger.info(f"[CTRL] luisteren op {SMA3_CONTROL_HOST}:{SMA3_CONTROL_PORT}")
+latest_aruco_mask = None
+
+# ============================================================
+# 0a) DOOSAN TCP CONFIG
+# ============================================================
+USE_DOOSAN              = True
+DOOSAN_HOST             = "192.168.108.43"
+DOOSAN_PORT             = 9000
+DOOSAN_CONNECT_TIMEOUT  = 30
+DOOSAN_READY_TIMEOUT    = 60
+DOOSAN_SEQUENCE_TIMEOUT = 600
+DOOSAN_LIFTED_TIMEOUT   = 45.0
+DEFAULT_DOOSAN_SEQUENCE = "pick_and_place"
+
+
+# ============================================================
+# 0b) ZYZ <-> R <-> quat
+# ============================================================
+def zyz_to_R(rx, ry, rz):
+    a, b, c = np.radians([rx, ry, rz])
+    Rz1 = np.array([[np.cos(a), -np.sin(a), 0],
+                    [np.sin(a),  np.cos(a), 0],
+                    [0,          0,         1]])
+    Ry_ = np.array([[ np.cos(b), 0, np.sin(b)],
+                    [ 0,         1, 0        ],
+                    [-np.sin(b), 0, np.cos(b)]])
+    Rz2 = np.array([[np.cos(c), -np.sin(c), 0],
+                    [np.sin(c),  np.cos(c), 0],
+                    [0,          0,         1]])
+    return Rz1 @ Ry_ @ Rz2
+
+
+def R_to_zyz(R):
+    if abs(R[2, 2]) < 1 - 1e-6:
+        ry = np.arctan2(np.sqrt(R[0, 2] ** 2 + R[1, 2] ** 2), R[2, 2])
+        rx = np.arctan2(R[1, 2], R[0, 2])
+        rz = np.arctan2(R[2, 1], -R[2, 0])
+    else:
+        ry = 0.0 if R[2, 2] > 0 else np.pi
+        rx = 0.0
+        rz = np.arctan2(R[1, 0], R[0, 0])
+    return np.degrees([rx, ry, rz])
+
+
+def R_to_quat(R):
+    t = np.trace(R)
+    if t > 0:
+        s = np.sqrt(t + 1.0) * 2
+        w = 0.25 * s
+        x = (R[2, 1] - R[1, 2]) / s
+        y = (R[0, 2] - R[2, 0]) / s
+        z = (R[1, 0] - R[0, 1]) / s
+    else:
+        i = np.argmax([R[0, 0], R[1, 1], R[2, 2]])
+        if i == 0:
+            s = np.sqrt(1 + R[0, 0] - R[1, 1] - R[2, 2]) * 2
+            w = (R[2, 1] - R[1, 2]) / s; x = 0.25 * s
+            y = (R[0, 1] + R[1, 0]) / s; z = (R[0, 2] + R[2, 0]) / s
+        elif i == 1:
+            s = np.sqrt(1 - R[0, 0] + R[1, 1] - R[2, 2]) * 2
+            w = (R[0, 2] - R[2, 0]) / s; x = (R[0, 1] + R[1, 0]) / s
+            y = 0.25 * s;                z = (R[1, 2] + R[2, 1]) / s
+        else:
+            s = np.sqrt(1 - R[0, 0] - R[1, 1] + R[2, 2]) * 2
+            w = (R[1, 0] - R[0, 1]) / s; x = (R[0, 2] + R[2, 0]) / s
+            y = (R[1, 2] + R[2, 1]) / s; z = 0.25 * s
+    return np.array([w, x, y, z])
+
+
+def quat_to_R(q):
+    w, x, y, z = q / np.linalg.norm(q)
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w)],
+        [2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y)],
+    ])
+
+
+def slerp(q1, q2, t):
+    d = np.dot(q1, q2)
+    if d < 0: q2, d = -q2, -d
+    if d > 0.9995:
+        return (q1 + t * (q2 - q1)) / np.linalg.norm(q1 + t * (q2 - q1))
+    th = np.arccos(d)
+    return (np.sin((1 - t) * th) * q1 + np.sin(t * th) * q2) / np.sin(th)
+
+
+# ============================================================
+# 0c) Grid-pose generator from 4 taught corners
+# ============================================================
+def generate_grid_poses(corners, NX, NY, verbose=True):
+    pos   = [np.array(p[:3], dtype=float) for p in corners]
+    quats = [R_to_quat(zyz_to_R(*p[3:])) for p in corners]
+    poses = []
+    for j in range(NY):
+        v = j / (NY - 1) if NY > 1 else 0.0
+        for i in range(NX):
+            u = i / (NX - 1) if NX > 1 else 0.0
+            P = ((1 - u) * (1 - v) * pos[0] + u * (1 - v) * pos[1]
+                 + (1 - u) * v       * pos[2] + u * v       * pos[3])
+            qt = slerp(quats[0], quats[1], u)
+            qb = slerp(quats[2], quats[3], u)
+            q  = slerp(qt, qb, v)
+            rx, ry, rz = R_to_zyz(quat_to_R(q))
+            poses.append([float(P[0]), float(P[1]), float(P[2]),
+                          float(rx),    float(ry),    float(rz)])
+            if verbose:
+                print(f"  [{i},{j}] posx({P[0]:.2f}, {P[1]:.2f}, {P[2]:.2f}, "
+                      f"{rx:.2f}, {ry:.2f}, {rz:.2f})")
+    return poses
+
+
+# ============================================================
+# 1)  MARKER LAYOUT IN THE ROBOT FRAME — PER GRIPPER
+# ============================================================
+MARKER_SIZE = 0.037
+HALF        = MARKER_SIZE / 2
+
+# ── Per-gripper marker CENTRES (m, robot base frame) ──────────────────
+# Each entry is the position of the marker centre when the corresponding
+# TCP touches that marker. Re-measure for every tool you mount.
+MARKER_CENTRES_BY_GRIPPER = {
+    "suction": {
+        1: np.array([0.76274, -0.04252, -0.05]),
+        0: np.array([0.50367, -0.04784, -0.05]),
+        5: np.array([0.76049,  0.12405, -0.05]),
+        2: np.array([0.50102,  0.12312, -0.05]),
+    },
+    "parallel": {
+        # TODO: re-teach with the parallel TCP (snoeks_paralell) active.
+        1: np.array([0.75821, -0.04302, -0.030]),
+        0: np.array([0.49940, -0.04712, -0.030]),
+        5: np.array([0.75660,  0.12696, -0.03]),
+        2: np.array([0.49802,  0.12370, -0.03]),
+    },
+}
+
+# ── Per-gripper marker ORIENTATIONS (ZYZ deg, robot base frame) ───────
+# The parallel TCP is mounted ~90° rotated wrt the suction TCP, so when
+# you teach the flange touching a marker the recorded ZYZ angles differ.
+# These are the angles you read off the pendant while teaching each
+# marker corner with that specific TCP active.
+MARKER_ORIENTATIONS_BY_GRIPPER = {
+    "suction": {
+        1: (0.3, -136.79, -4.18),
+        0: (0.3, -136.79, -4.18),
+        5: (0.3, -136.79, -4.18),
+        2: (0.3, -136.79, -4.18),
+    },
+    "parallel": {
+        
+        1: (0.06, 136.79, 1.28),
+        0: (0.06, 136.79, 1.28),
+        5: (0.06, 136.79, 1.28),
+        2: (0.06, 136.79, 1.28),
+    },
+}
+
+# Per-gripper calibration files (homography pix → robot)
+CALIB_FILES = {
+    "suction":  "world_calib_suction.json",
+    "parallel": "world_calib_parallel.json",
+}
+
+# Mapping gripper kind → TCP name registered on the Doosan
+# (must match the keys in robotworker_2.py → TCPS).
+GRIPPER_TO_TCP = {
+    "suction":  "snoeks1",
+    "parallel": "snoeks_paralell",
+}
+
+CORNER_OFFSETS_FROM_CENTRE_IMG_ORDER = np.array([
+    [+HALF, -HALF, 0.0],
+    [-HALF, -HALF, 0.0],
+    [-HALF, +HALF, 0.0],
+    [+HALF, +HALF, 0.0],
+])
+
+# Image-frame role of each marker id (which physical corner of the tray
+# they sit on). Independent of gripper.
+_ID_TL_IMG = 1
+_ID_TR_IMG = 0
+_ID_BL_IMG = 5
+_ID_BR_IMG = 2
+
+# ── Currently active layout (filled in by _apply_gripper_layout) ──────
+ACTIVE_GRIPPER              = "suction"
+MARKER_CENTRES              = {}
+MARKER_ORIENTATIONS_ZYZ_DEG = {}
+WORLD_MARKERS               = {}
+WORLD_CORNERS_IMG           = {}
+EXPECTED_IDS                = set()
+WORKSPACE_X_MIN = WORKSPACE_X_MAX = 0.0
+WORKSPACE_Y_MIN = WORKSPACE_Y_MAX = 0.0
+CALIB_FILE                  = "world_calib_suction.json"
+GRID_CORNERS                = []
+marker_corner_history       = {}
+
+
+def _make_grid_corner(mid):
+    c_m  = MARKER_CENTRES[mid]
+    rx, ry, rz = MARKER_ORIENTATIONS_ZYZ_DEG[mid]
+    return [float(c_m[0] * 1000.0),
+            float(c_m[1] * 1000.0),
+            float(c_m[2] * 1000.0),
+            float(rx), float(ry), float(rz)]
+
+
+def _apply_gripper_layout(gname: str):
+    """Switch all marker/workspace/calib globals to the chosen gripper."""
+    global ACTIVE_GRIPPER, MARKER_CENTRES, MARKER_ORIENTATIONS_ZYZ_DEG
+    global WORLD_MARKERS, WORLD_CORNERS_IMG, EXPECTED_IDS
+    global WORKSPACE_X_MIN, WORKSPACE_X_MAX
+    global WORKSPACE_Y_MIN, WORKSPACE_Y_MAX
+    global CALIB_FILE, GRID_CORNERS, marker_corner_history
+    global H_pix2robot, H_robot2pix
+    global H_pix2robot_locked, H_robot2pix_locked, calibration_locked
+
+    if gname not in MARKER_CENTRES_BY_GRIPPER:
+        raise RuntimeError(f"No marker layout for gripper {gname!r}")
+    if gname not in MARKER_ORIENTATIONS_BY_GRIPPER:
+        raise RuntimeError(f"No marker orientations for gripper {gname!r}")
+
+    ACTIVE_GRIPPER              = gname
+    MARKER_CENTRES              = dict(MARKER_CENTRES_BY_GRIPPER[gname])
+    MARKER_ORIENTATIONS_ZYZ_DEG = dict(MARKER_ORIENTATIONS_BY_GRIPPER[gname])
+    WORLD_MARKERS               = dict(MARKER_CENTRES)
+    WORLD_CORNERS_IMG = {mid: WORLD_MARKERS[mid][None, :]
+                              + CORNER_OFFSETS_FROM_CENTRE_IMG_ORDER
+                         for mid in WORLD_MARKERS}
+    EXPECTED_IDS = set(WORLD_MARKERS.keys())
+
+    xs = [c[0] for c in MARKER_CENTRES.values()]
+    ys = [c[1] for c in MARKER_CENTRES.values()]
+    WORKSPACE_X_MIN = min(xs) - MARKER_SIZE
+    WORKSPACE_X_MAX = max(xs) + MARKER_SIZE
+    WORKSPACE_Y_MIN = min(ys) - MARKER_SIZE
+    WORKSPACE_Y_MAX = max(ys) + MARKER_SIZE
+
+    CALIB_FILE = CALIB_FILES.get(gname, f"world_calib_{gname}.json")
+
+    GRID_CORNERS = [
+        _make_grid_corner(_ID_TL_IMG),
+        _make_grid_corner(_ID_TR_IMG),
+        _make_grid_corner(_ID_BL_IMG),
+        _make_grid_corner(_ID_BR_IMG),
+    ]
+
+    # Wipe per-frame ArUco averaging — angles & centres just changed.
+    marker_corner_history = {mid: deque(maxlen=AVG_WINDOW)
+                             for mid in WORLD_MARKERS}
+
+    # Drop any current homography — it belongs to the previous gripper.
+    H_pix2robot = H_robot2pix = None
+    H_pix2robot_locked = H_robot2pix_locked = None
+    calibration_locked = False
+
+    logger.info(f"[layout] active gripper -> {gname!r}  "
+                f"calib_file={CALIB_FILE}")
+
+
+def _sanity_check_layout():
+    print(f"\n── LAYOUT SANITY CHECK  (gripper={ACTIVE_GRIPPER}) ──")
+    pairs = [
+        (_ID_TL_IMG, _ID_TR_IMG, "top row    (1 -> 0)"),
+        (_ID_BL_IMG, _ID_BR_IMG, "bottom row (5 -> 2)"),
+        (_ID_TL_IMG, _ID_BL_IMG, "left col   (1 -> 5)"),
+        (_ID_TR_IMG, _ID_BR_IMG, "right col  (0 -> 2)"),
+    ]
+    for a, b, label in pairs:
+        d = WORLD_MARKERS[b] - WORLD_MARKERS[a]
+        dist = float(np.linalg.norm(d[:2]))
+        print(f"  {label}: dX={d[0]*1000:+7.1f}  dY={d[1]*1000:+7.1f}  "
+              f"dZ={d[2]*1000:+6.1f}  |XY|={dist*1000:6.1f} mm")
+    zs = [c[2] for c in WORLD_MARKERS.values()]
+    print(f"  Z spread: {(max(zs)-min(zs))*1000:.1f} mm")
+    print("──────────────────────────\n")
+
+
+GRID_NX, GRID_NY = 5, 4
+GRID_POSES_FILE  = "grid_poses.json"
+RUN_GRID_ON_M    = False
+
+
+# ============================================================
+# 2) CALIB / WORKSPACE / UI
+# ============================================================
+COLOR_W, COLOR_H = 1280, 720
+DEPTH_W, DEPTH_H = 1280, 720
+FPS              = 30
+UI_SCALE         = COLOR_W / 640.0
+
+AVG_WINDOW       = 30
+MAX_REPROJ_PX    = 3.0 * UI_SCALE
+
+CAPTURE_PATH       = "captured.png"
+DETECT_OUTPUT_PATH = "output_detect.jpg"
+
+COORD_UNITS = "mm"
+SHOW_GRID   = False
+USE_CORNERS = False
+
+latest_annotated_bgr   = None
+_annot_lock            = threading.Lock()
+sequence_thread        = None
+sequence_running       = False
+
+# ============================================================
+# 3) SEQUENCE / PIPELINE SETTINGS
+# ============================================================
+SEQUENCE_FILE      = "sequence_robotic_arm.json"
+POST_PICK_SETTLE_S = 0.8
+FRAME_FLUSH_COUNT  = 5
+
+
+# ============================================================
+# 4) GRIPPERS
+# ============================================================
+GRIPPERS = {
+    "parallel": {
+        "description": "Two-finger parallel gripper",
+        "max_opening_mm":        80,
+        "min_opening_mm":        1,
+        "finger_length_mm":      1001,
+        "finger_width_mm":       5,
+        "finger_thickness_mm":   5,
+        "max_payload_g":         500,
+        "grasp_margin_mm":       4,
+        "side_clearance_mm":     8,
+        "approach_clearance_mm": 15,
+        "finger_pad_px":         20,
+        "px_per_mm":             None,
+    },
+    "suction": {
+        "description": "Suction cup",
+        "cup_diameter_mm":       4,
+        "max_payload_g":         300,
+        "flatness_tolerance_mm": 1.5,
+        "edge_margin_mm":        5,
+        "min_object_area_px":    600,
+        "px_per_mm":             None,
+    },
+}
+# Per-gripper Doosan sequence (overrides the JSON's "doosan_sequence" field).
+SEQUENCE_BY_GRIPPER = {
+    "suction":  "pick_and_place_suction",
+    "parallel": "pick_and_place_parallel",
+}
+
+# ============================================================
+# 5) PARTS
+# ============================================================
+PARTS = {
+    "black_block": {
+        "name": "Black block",
+        "prompt": "black object",
+        "gripper": "suction",
+        "compute_angle": True,
+        "pickup_height_mm": -10.0,
+        "selection": {"min_score": 0.60, "min_area_px": 500,
+                      "max_aspect_ratio": 2.5, "min_compactness": 0.50,
+                      "require_in_workspace": True},
+    },
+    "vilt_fake":{
+        "name": "vilt sticker",
+        "prompt": "black object",
+        "gripper": "suction",
+        "compute_angle": True,
+        "pickup_height_mm": -50.0,
+        "angle_mode": "square",
+        "selection": {"min_score": 0.55,
+                      "require_in_workspace": True},
+    },
+    "manuel": {
+        "name": "manuel",
+        "prompt": "text",
+        "gripper": "suction",
+        "compute_angle": True,
+        "pickup_height_mm": -55.0,
+        "selection": {"min_score": 0.45, "min_area_px": 1000,
+                      "require_in_workspace": False},
+    },
+    "blue object": {
+        "name": "blue object",
+        "prompt": "blue object",
+        "gripper": "parallel",
+        "compute_angle": True,
+        "pickup_height_mm": -40.0,
+        "selection": {"min_score": 0.45, "min_area_px": 300,
+                      "require_in_workspace": True},
+    },
+    "black nail": {
+        "name": "black nail",
+        "prompt": "black object",
+        "gripper": "parallel",
+        "compute_angle": True,
+        "pickup_height_mm": -45.0,
+        "selection": {"min_score": 0.45, "min_area_px": 300,
+                      "max_area_px": 500,
+                      "require_in_workspace": True},
+    },
+    "plastic bags": {
+        "name": "plastic bags",
+        "prompt": "plastic ",
+        "gripper": "parallel",
+        "compute_angle": True,
+        "pickup_height_mm": -50.0,
+        "selection": {"min_score": 0.4, "min_area_px": 300,
+                      "require_in_workspace": True},
+    },
+    "black cap big": {
+        "name": "black cap big",
+        "prompt": "black object",
+        "gripper": "suction",
+        "compute_angle": True,
+        "pickup_height_mm": -45.0,
+        "selection": {"min_score": 0.75, "min_area_px": 300,
+                      "max_area_px": 1500,
+                      "require_in_workspace": True},
+    },
+    "Black bumper": {
+        "name": "Black bumper",
+        "prompt": "black object",
+        "gripper": "suction",
+        "pickup_height_mm": -35.0,
+        "compute_angle": True,
+        "selection": {"min_score": 0.75, "require_in_workspace": True},
+    },
+    "VW piece": {
+        "name": "VW piece",
+        "prompt": "metal part",
+        "gripper": "suction",
+        "pickup_height_mm": -50.0,
+        "compute_angle": True,
+        "selection": {"min_score": 0.45, "require_in_workspace": True},
+    },
+    "Plug-small": {
+        "name": "Plug-small",
+        "prompt": "Black object",
+        "gripper": "suction",
+        "pickup_height_mm": -50.0,
+        "compute_angle": True,
+        "selection": {"min_score": 0.45, "require_in_workspace": True},
+    },
+    "Cap-small": {
+        "name": "Cap-small",
+        "prompt": "Black object",
+        "gripper": "suction",
+        "pickup_height_mm": -50.0,
+        "compute_angle": True,
+        "selection": {"min_score": 0.45, "require_in_workspace": True},
+    },
+    "Vilt": {
+        "name": "Vilt",
+        "prompt": "Black object",
+        "gripper": "suction",
+        "pickup_height_mm": -45.0,
+        "compute_angle": True,
+        "angle_mode": "square",
+        "selection": {"min_score": 0.45, "require_in_workspace": True},
+    },
+    "VW-cap":{
+        "name": "VW-cap",
+        "prompt": "Metal piece",
+        "gripper": "suction",
+        "pickup_height_mm": -45.0,
+        "compute_angle": True,
+        "selection": {"min_score": 0.45, "require_in_workspace": True},
+    },
+    "Cap-big":{
+        "name": "Cap-big",
+        "prompt": "Black object",
+        "gripper": "suction",
+        "pickup_height_mm": -45.0,
+        "compute_angle": True,
+        "selection": {"min_score": 0.45, "require_in_workspace": True},
+    },
+    "Manual":{
+        "name": "Manual",
+        "prompt": "Black object",
+        "gripper": "suction",
+        "pickup_height_mm": -45.0,
+        "compute_angle": True,
+        "selection": {"min_score": 0.45, "require_in_workspace": True},
+    }
+}
+ACTIVE_PART = "black_block"
+PART_KEYS   = list(PARTS.keys())
+
+
+# ============================================================
+# 6) REALSENSE
+# ============================================================
+pipeline = rs.pipeline()
+config = rs.config()
+config.enable_stream(rs.stream.color, COLOR_W, COLOR_H, rs.format.bgr8, FPS)
+config.enable_stream(rs.stream.depth, DEPTH_W, DEPTH_H, rs.format.z16, FPS)
+profile = pipeline.start(config)
+align = rs.align(rs.stream.color)
+
+depth_sensor = profile.get_device().first_depth_sensor()
+depth_scale  = depth_sensor.get_depth_scale()
+
+spatial = rs.spatial_filter()
+spatial.set_option(rs.option.filter_magnitude, 2)
+spatial.set_option(rs.option.filter_smooth_alpha, 0.5)
+spatial.set_option(rs.option.filter_smooth_delta, 20)
+temporal = rs.temporal_filter()
+temporal.set_option(rs.option.filter_smooth_alpha, 0.4)
+temporal.set_option(rs.option.filter_smooth_delta, 20)
+hole_filling = rs.hole_filling_filter(1)
+
+intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+camera_matrix = np.array([[intr.fx, 0, intr.ppx],
+                          [0, intr.fy, intr.ppy],
+                          [0,       0,        1]], dtype=np.float64)
+dist_coeffs = np.array(intr.coeffs, dtype=np.float64)
+print(f"Stream: {intr.width}x{intr.height}  fx={intr.fx:.1f} fy={intr.fy:.1f}")
+
+
+# ============================================================
+# 7) ARUCO
+# ============================================================
+aruco_dict   = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_50)
+aruco_params = cv2.aruco.DetectorParameters()
+aruco_params.cornerRefinementMethod        = cv2.aruco.CORNER_REFINE_SUBPIX
+aruco_params.cornerRefinementWinSize       = 5
+aruco_params.cornerRefinementMaxIterations = 50
+aruco_params.cornerRefinementMinAccuracy   = 0.01
+detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+
+
+# ============================================================
+# 8) GLOBALS
+# ============================================================
+H_pix2robot        = None
+H_pix2robot_locked = None
+H_robot2pix        = None
+H_robot2pix_locked = None
+calibration_locked = False
+
+latest_depth_image = None
+latest_color_image = None
+
+# Initialise marker layout to the default ("suction") so that all globals
+# above this point exist before _apply_gripper_layout is first called.
+_apply_gripper_layout("suction")
+
+clicked_points        = []
+last_reproj_err_px    = None
+current_px_per_mm     = None
+
+
+# ============================================================
+# 9) SAM3 LOAD
+# ============================================================
+print("\nLoading SAM3 model (one-time)…")
+_t0 = time.time()
+_sam3_model     = build_sam3_image_model().float()
+_sam3_processor = Sam3Processor(_sam3_model)
+print(f"SAM3 ready in {time.time()-_t0:.1f}s\n")
+
+
+# ============================================================
+# 10) HELPERS
+# ============================================================
+def unit_scale():
+    return {"mm": 1000.0, "cm": 100.0, "m": 1.0}[COORD_UNITS]
+
+
+def fmt_xyz(xyz_m, compact=False):
+    if xyz_m is None:
+        return "X=---  Y=---  Z=---"
+    s = unit_scale()
+    x, y, z = xyz_m[0]*s, xyz_m[1]*s, xyz_m[2]*s
+    if compact:
+        return f"X={x:7.1f} Y={y:7.1f} Z={z:7.1f} {COORD_UNITS}"
+    return f"X = {x:8.2f}  Y = {y:8.2f}  Z = {z:8.2f}  {COORD_UNITS}"
+
+
+def apply_H(H, pts_uv):
+    pts  = np.asarray(pts_uv, dtype=np.float64).reshape(-1, 2)
+    ones = np.ones((pts.shape[0], 1))
+    hom  = np.hstack([pts, ones]) @ H.T
+    hom /= hom[:, 2:3]
+    return hom[:, :2]
+
+
+def interp_plane_Z(x, y):
+    z_tl = WORLD_MARKERS[_ID_TL_IMG][2]
+    z_tr = WORLD_MARKERS[_ID_TR_IMG][2]
+    z_bl = WORLD_MARKERS[_ID_BL_IMG][2]
+    z_br = WORLD_MARKERS[_ID_BR_IMG][2]
+    x_l = WORLD_MARKERS[_ID_TL_IMG][0]
+    x_r = WORLD_MARKERS[_ID_TR_IMG][0]
+    y_t = WORLD_MARKERS[_ID_TL_IMG][1]
+    y_b = WORLD_MARKERS[_ID_BL_IMG][1]
+    fx = (x - x_l) / (x_r - x_l) if abs(x_r - x_l) > 1e-9 else 0.0
+    fy = (y - y_t) / (y_b - y_t) if abs(y_b - y_t) > 1e-9 else 0.0
+    fx = float(np.clip(fx, -0.5, 1.5))
+    fy = float(np.clip(fy, -0.5, 1.5))
+    z_top    = (1 - fx) * z_tl + fx * z_tr
+    z_bottom = (1 - fx) * z_bl + fx * z_br
+    return (1 - fy) * z_top + fy * z_bottom
+
+
+def get_active_H():
+    if calibration_locked:
+        return H_pix2robot_locked, H_robot2pix_locked
+    return H_pix2robot, H_robot2pix
+
+
+def pixel_to_world(u, v, depth_image=None):
+    H, _ = get_active_H()
+    if H is None:
+        return None
+    xy = apply_H(H, [[u, v]])[0]
+    x, y = float(xy[0]), float(xy[1])
+    z = interp_plane_Z(x, y)
+    return np.array([x, y, z])
+
+
+def pixel_yaw_to_robot_yaw(u, v, angle_deg_pixel):
+    H, _ = get_active_H()
+    if H is None:
+        return angle_deg_pixel
+    rad = np.radians(angle_deg_pixel)
+    eps = 10.0
+    p0 = apply_H(H, [[u, v]])[0]
+    p1 = apply_H(H, [[u + eps * np.cos(rad),
+                      v + eps * np.sin(rad)]])[0]
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+        return angle_deg_pixel
+    return float(np.degrees(np.arctan2(dy, dx)))
+
+
+def in_workspace(world_xyz):
+    x, y = world_xyz[0], world_xyz[1]
+    return (WORKSPACE_X_MIN - 0.01 <= x <= WORKSPACE_X_MAX + 0.01) and \
+           (WORKSPACE_Y_MIN - 0.01 <= y <= WORKSPACE_Y_MAX + 0.01)
+
+
+def get_depth_median(depth_image, u, v, size=7):
+    if depth_image is None:
+        return 0.0
+    h, w = depth_image.shape
+    hp = size // 2
+    y1, y2 = max(0, int(v) - hp), min(h, int(v) + hp + 1)
+    x1, x2 = max(0, int(u) - hp), min(w, int(u) + hp + 1)
+    patch = depth_image[y1:y2, x1:x2]
+    valid = patch[patch > 0]
+    if len(valid) < 5:
+        return 0.0
+    return float(np.median(valid)) * depth_scale
+
+
+def build_workspace_pixel_mask(shape_hw, pad_px=0):
+    _, H_inv = get_active_H()
+    if H_inv is None:
+        return None
+    h, w = shape_hw
+    ws_robot = np.array([
+        [WORKSPACE_X_MIN, WORKSPACE_Y_MIN],
+        [WORKSPACE_X_MAX, WORKSPACE_Y_MIN],
+        [WORKSPACE_X_MAX, WORKSPACE_Y_MAX],
+        [WORKSPACE_X_MIN, WORKSPACE_Y_MAX],
+    ], dtype=np.float64)
+    ws_img = apply_H(H_inv, ws_robot).astype(np.int32)
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillConvexPoly(mask, ws_img, 255)
+    if pad_px > 0:
+        mask = cv2.dilate(mask, np.ones((pad_px, pad_px), np.uint8))
+    return mask
+
+
+# ============================================================
+# 11) HOMOGRAPHY CALIBRATION
+# ============================================================
+def fit_homography(pix_pts, robot_xy):
+    pix_pts  = np.asarray(pix_pts,  dtype=np.float64)
+    robot_xy = np.asarray(robot_xy, dtype=np.float64)
+    if len(pix_pts) < 4:
+        return None, None, None, None
+    if len(pix_pts) == 4:
+        H = cv2.getPerspectiveTransform(pix_pts.astype(np.float32),
+                                        robot_xy.astype(np.float32))
+        H = H.astype(np.float64)
+    else:
+        H, _ = cv2.findHomography(pix_pts, robot_xy, cv2.RANSAC, 0.001)
+    if H is None:
+        return None, None, None, None
+    H_inv    = np.linalg.inv(H)
+    proj_pix = apply_H(H_inv, robot_xy)
+    err      = np.linalg.norm(proj_pix - pix_pts, axis=1)
+    return H, H_inv, float(err.mean()), err
+
+
+def reorder_corners_to_image_frame(detected_corners, marker_centre_pix,
+                                   H_inv_seed, mid):
+    expected_world = WORLD_CORNERS_IMG[mid][:, :2]
+    expected_pix   = apply_H(H_inv_seed, expected_world)
+    used, order = set(), []
+    for i in range(4):
+        d = np.linalg.norm(detected_corners - expected_pix[i], axis=1)
+        for j in np.argsort(d):
+            if j not in used:
+                order.append(int(j))
+                used.add(int(j))
+                break
+    return detected_corners[order]
+
+
+def save_calibration(H, err_px):
+    data = {
+        "timestamp":            time.strftime("%Y-%m-%d %H:%M:%S"),
+        "method":               "planar_homography",
+        "gripper":              ACTIVE_GRIPPER,
+        "use_corners":          USE_CORNERS,
+        "H_pix2robot":          H.tolist(),
+        "marker_size_m":        MARKER_SIZE,
+        "marker_centres_robot": {str(k): v.tolist()
+                                 for k, v in MARKER_CENTRES.items()},
+        "marker_orientations_zyz_deg": {str(k): list(v)
+                                 for k, v in MARKER_ORIENTATIONS_ZYZ_DEG.items()},
+        "mean_reproj_err_px":   err_px,
+        "intrinsics": {"fx": intr.fx, "fy": intr.fy,
+                       "ppx": intr.ppx, "ppy": intr.ppy,
+                       "width": intr.width, "height": intr.height},
+    }
+    with open(CALIB_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"Calibration saved -> {CALIB_FILE}  (gripper={ACTIVE_GRIPPER})")
+
+
+def load_calibration():
+    if not os.path.exists(CALIB_FILE):
+        print(f"No calibration file: {CALIB_FILE}")
+        return None, None
+    with open(CALIB_FILE, "r") as f:
+        data = json.load(f)
+    if "H_pix2robot" not in data:
+        print(f"  {CALIB_FILE} does not contain an H_pix2robot homography.")
+        return None, None
+    H = np.array(data["H_pix2robot"], dtype=np.float64)
+    H_inv = np.linalg.inv(H)
+    print(f"Calibration loaded from {CALIB_FILE} "
+          f"(gripper={ACTIVE_GRIPPER}, "
+          f"reproj={data.get('mean_reproj_err_px','?')} px)")
+    return H, H_inv
+
+
+def update_px_per_mm_from_aruco(corners_list, ids_array):
+    global current_px_per_mm
+    if ids_array is None or len(ids_array) == 0:
+        return
+    sides_px = []
+    for c in corners_list:
+        pts = c.reshape(4, 2)
+        for i in range(4):
+            sides_px.append(np.linalg.norm(pts[i] - pts[(i + 1) % 4]))
+    if not sides_px:
+        return
+    avg_side_px = float(np.mean(sides_px))
+    px_per_mm   = avg_side_px / (MARKER_SIZE * 1000.0)
+    current_px_per_mm = px_per_mm
+    for g in GRIPPERS.values():
+        g["px_per_mm"] = px_per_mm
+
+
+# ============================================================
+# 12) DETECTION HELPERS
+# ============================================================
+def mask_to_bool(mask):
+    m = mask.cpu().numpy()
+    if m.ndim == 3:
+        m = m.squeeze(0)
+    return m.astype(bool)
+
+def square_angle_px(bool_mask):
+    import cv2
+    import numpy as np
+
+    m = bool_mask.astype("uint8")
+    if m.sum() < 10:
+        return 0.0, None, (0.0, 0.0), 0.0
+
+    contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 0.0, None, (0.0, 0.0), 0.0
+
+    cnt = max(contours, key=cv2.contourArea)
+    if len(cnt) < 5:
+        ys, xs = np.where(bool_mask)
+        return 0.0, (float(xs.mean()), float(ys.mean())), (0.0, 0.0), 0.0
+
+    (cx, cy), (w, h), ang = cv2.minAreaRect(cnt)
+    a = ang
+    if w < h:
+        a += 90.0
+    a = ((a + 90.0) % 180.0) - 90.0
+    a = ((a + 45.0) % 90.0) - 45.0
+
+    squareness = (min(w, h) / max(w, h)) if max(w, h) > 0 else 0.0
+    return float(a), (float(cx), float(cy)), (float(w), float(h)), float(squareness)
+
+
+def compute_pixel_angle(part, bool_mask):
+    mode = part.get("angle_mode", "principal")
+    if mode == "square":
+        ang, _c, _wh, _sq = square_angle_px(bool_mask)
+        return ang
+    ang, _maj, _min, _hwM, _hwm = principal_axes(bool_mask)
+    return ang
+
+
+def principal_axes(bool_mask):
+    ys, xs = np.where(bool_mask)
+    if len(xs) < 5:
+        return 0.0, np.array([1., 0.]), np.array([0., 1.]), 0.0, 0.0
+    cx_m, cy_m = xs.mean(), ys.mean()
+    pts = np.column_stack([xs - cx_m, ys - cy_m]).astype(float)
+    cov = pts.T @ pts / len(pts)
+    vals, vecs = np.linalg.eigh(cov)
+    major = vecs[:, 1]
+    minor = np.array([-major[1], major[0]])
+    proj_major = pts @ major
+    proj_minor = pts @ minor
+    hw_major = (proj_major.max() - proj_major.min()) / 2.0
+    hw_minor = (proj_minor.max() - proj_minor.min()) / 2.0
+    angle = float(np.degrees(np.arctan2(major[1], major[0])))
+    return angle, major, minor, hw_major, hw_minor
+
+
+def compactness_score(bool_mask):
+    eroded = binary_erosion(bool_mask, iterations=1)
+    boundary = bool_mask ^ eroded
+    perim = boundary.sum()
+    area = bool_mask.sum()
+    return float(4 * np.pi * area / (perim ** 2)) if perim else 0.0
+
+
+def bbox_aspect_ratio_xyxy(box):
+    x0, y0, x1, y1 = [float(v) for v in box.tolist()]
+    w = max(x1 - x0, 1.0); h = max(y1 - y0, 1.0)
+    r = w / h
+    return max(r, 1.0 / r)
+
+
+def mask_centroid(bool_mask):
+    ys, xs = np.where(bool_mask)
+    if len(xs) == 0:
+        return None
+    return float(xs.mean()), float(ys.mean())
+
+
+# ============================================================
+# 13) GRIPPER FEASIBILITY
+# ============================================================
+def _stamp_rect(canvas, centre, axis_along, axis_perp,
+                half_along, half_perp):
+    H, W = canvas.shape
+    corners = np.array([
+        centre - half_along * axis_along - half_perp * axis_perp,
+        centre + half_along * axis_along - half_perp * axis_perp,
+        centre + half_along * axis_along + half_perp * axis_perp,
+        centre - half_along * axis_along + half_perp * axis_perp,
+    ], dtype=np.int32)
+    cv2.fillConvexPoly(canvas.view(np.uint8).reshape(H, W), corners, 1)
+    return canvas
+
+
+def gripper_can_grasp(part, bool_mask, occupied_others):
+    g = GRIPPERS[part["gripper"]]
+    ppm = g.get("px_per_mm")
+    info = {"gripper": part["gripper"]}
+
+    if ppm is None or ppm <= 0:
+        return False, "no px_per_mm (no ArUco visible)", info
+
+    if part["gripper"] == "parallel":
+        ang, major, minor, hw_major, hw_minor = principal_axes(bool_mask)
+        c = mask_centroid(bool_mask)
+        if c is None:
+            return False, "empty mask", info
+        centre = np.array(c)
+        info.update({"centre": centre, "major": major, "minor": minor,
+                     "hw_major": hw_major, "hw_minor": hw_minor,
+                     "angle_deg": ang})
+
+        width_mm  = (2.0 * hw_minor) / ppm
+        length_mm = (2.0 * hw_major) / ppm
+        info["width_mm"]  = width_mm
+        info["length_mm"] = length_mm
+
+        if width_mm < g["min_opening_mm"]:
+            return False, f"too thin ({width_mm:.1f}mm < {g['min_opening_mm']}mm)", info
+        usable_max = g["max_opening_mm"] - g["grasp_margin_mm"]
+        if width_mm > usable_max:
+            return False, f"too wide ({width_mm:.1f}mm > {usable_max:.1f}mm)", info
+        if length_mm > g["finger_length_mm"]:
+            return False, f"too long ({length_mm:.1f}mm > {g['finger_length_mm']}mm)", info
+
+        finger_w_px  = (g["finger_width_mm"]     * ppm) / 2.0
+        finger_t_px  = (g["finger_thickness_mm"] * ppm) / 2.0
+        side_clr_px  = g["side_clearance_mm"]    * ppm
+        grasp_mar_px = g["grasp_margin_mm"]      * ppm
+
+        reach = hw_minor + grasp_mar_px + finger_t_px
+        p1 = centre + reach * minor
+        p2 = centre - reach * minor
+        info["finger_pts"] = (p1, p2)
+        info["finger_half_along"] = finger_w_px + side_clr_px
+        info["finger_half_perp"]  = finger_t_px + side_clr_px
+
+        H, W = bool_mask.shape
+        foot = np.zeros((H, W), dtype=bool)
+        for fp in (p1, p2):
+            _stamp_rect(foot, fp, major, minor,
+                        finger_w_px + side_clr_px,
+                        finger_t_px + side_clr_px)
+
+        if np.any(foot & occupied_others):
+            return False, "neighbour in finger path", info
+
+        return True, "ok", info
+
+    elif part["gripper"] == "suction":
+        c = mask_centroid(bool_mask)
+        if c is None:
+            return False, "empty mask", info
+        cx, cy = c
+        info["centre"] = np.array([cx, cy])
+        info["angle_deg"] = 0.0
+
+        area_px = int(bool_mask.sum())
+        if area_px < g["min_object_area_px"]:
+            return False, f"area too small ({area_px} < {g['min_object_area_px']})", info
+
+        dt = distance_transform_edt(bool_mask)
+        max_r_px = float(dt.max())
+        cup_r_px = (g["cup_diameter_mm"] / 2.0) * ppm
+        info["cup_r_px"] = cup_r_px
+        info["edge_margin_px"] = g["edge_margin_mm"] * ppm
+        if max_r_px < cup_r_px:
+            return False, (f"no flat spot for cup "
+                           f"(max_r={max_r_px:.0f}px < cup_r={cup_r_px:.0f}px)"), info
+
+        H, W = bool_mask.shape
+        yy, xx = np.ogrid[:H, :W]
+        clr_r = cup_r_px + g["edge_margin_mm"] * ppm
+        disc = (xx - cx) ** 2 + (yy - cy) ** 2 <= clr_r ** 2
+        if np.any(disc & occupied_others):
+            return False, "neighbour within edge margin", info
+
+        return True, "ok", info
+
+    return False, f"unknown gripper {part['gripper']!r}", info
+
+
+# ============================================================
+# 14) SELECTION FILTER
+# ============================================================
+def passes_selection(part, score, area, aspect, compact, world_xyz):
+    sel = part["selection"]
+    if "min_score" in sel and score < sel["min_score"]:
+        return False, f"score {score:.2f} < {sel['min_score']}"
+    if "min_area_px" in sel and area < sel["min_area_px"]:
+        return False, f"area {area} < {sel['min_area_px']}"
+    if "max_area_px" in sel and area > sel["max_area_px"]:
+        return False, f"area {area} > {sel['max_area_px']}"
+    if "max_aspect_ratio" in sel and aspect > sel["max_aspect_ratio"]:
+        return False, f"aspect {aspect:.2f} > {sel['max_aspect_ratio']}"
+    if "min_compactness" in sel and compact < sel["min_compactness"]:
+        return False, f"compact {compact:.2f} < {sel['min_compactness']}"
+    if sel.get("require_in_workspace", False):
+        if world_xyz is None:
+            return False, "no world XYZ"
+        if not in_workspace(world_xyz):
+            return False, "outside workspace"
+    return True, "ok"
+
+
+# ============================================================
+# 15) DRAW
+# ============================================================
+PALETTE = [(80,140,255,90),(80,200,120,90),(255,200,50,90),
+           (200,80,255,90),(50,220,220,90),(255,80,80,90)]
+
+
+def draw_results(image, candidates, best_idx):
+    overlay = Image.new("RGBA", image.size, (0,0,0,0))
+    for i, cand in enumerate(candidates):
+        layer = np.zeros((*cand["mask_bool"].shape, 4), dtype=np.uint8)
+        col = PALETTE[i % len(PALETTE)] if cand["accepted"] else (255,80,80,70)
+        layer[cand["mask_bool"]] = col
+        overlay = Image.alpha_composite(overlay, Image.fromarray(layer, "RGBA"))
+    image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(image)
+
+    for i, cand in enumerate(candidates):
+        x0, y0, x1, y1 = [int(v) for v in cand["box"].tolist()]
+        is_best = (i == best_idx)
+        if is_best:
+            col = "lime"; w = 4
+        elif cand["accepted"]:
+            col = "#90ee90"; w = 2
+        else:
+            col = "#ff5050"; w = 1
+        draw.rectangle([x0, y0, x1, y1], outline=col, width=w)
+
+        ginfo = cand.get("ginfo", {})
+        if ginfo.get("gripper") == "parallel" and "finger_pts" in ginfo:
+            p1, p2 = ginfo["finger_pts"]
+            centre = ginfo["centre"]
+            major  = ginfo["major"]
+            minor  = ginfo["minor"]
+            ha = ginfo["finger_half_along"]
+            hp = ginfo["finger_half_perp"]
+            L = ginfo["hw_minor"] + hp + 4
+            a = centre + L * minor
+            b = centre - L * minor
+            ax_col = "cyan" if cand["accepted"] else "#ff9090"
+            draw.line([a[0], a[1], b[0], b[1]], fill=ax_col, width=2)
+            fc = "lime" if is_best else ("orange" if cand["accepted"] else "red")
+            for fp in (p1, p2):
+                corners = [
+                    fp - ha * major - hp * minor,
+                    fp + ha * major - hp * minor,
+                    fp + ha * major + hp * minor,
+                    fp - ha * major + hp * minor,
+                ]
+                pts = [(float(c[0]), float(c[1])) for c in corners]
+                draw.polygon(pts, outline=fc)
+                draw.ellipse([fp[0]-3, fp[1]-3, fp[0]+3, fp[1]+3], fill=fc)
+
+        elif ginfo.get("gripper") == "suction" and "centre" in ginfo:
+            cx, cy = ginfo["centre"]
+            cup_r = ginfo.get("cup_r_px", 8)
+            clr_r = cup_r + ginfo.get("edge_margin_px", 0)
+            fc = "lime" if is_best else ("orange" if cand["accepted"] else "red")
+            draw.ellipse([cx-cup_r, cy-cup_r, cx+cup_r, cy+cup_r],
+                         outline=fc, width=2)
+            for a in range(0, 360, 20):
+                draw.arc([cx-clr_r, cy-clr_r, cx+clr_r, cy+clr_r],
+                         start=a, end=a+10, fill="cyan", width=1)
+
+        label = f"#{i+1} s={cand['score']:.2f}"
+        if not cand["accepted"]:
+            label += f"  DROP: {cand['reason']}"
+        draw.text((x0, max(0, y0 - 14)), label, fill=col)
+
+    if best_idx is not None:
+        cand = candidates[best_idx]
+        cx, cy = cand["pick_px"]
+        r = 22
+        draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline="red", width=3)
+        draw.line([cx-2*r, cy, cx+2*r, cy], fill="red", width=2)
+        draw.line([cx, cy-2*r, cx, cy+2*r], fill="red", width=2)
+        draw.text((cx + r + 4, cy - 8), "PICK", fill="red")
+    return image
+
+
+# ============================================================
+# 16) CORE DETECTOR
+# ============================================================
+def detect_part(part_key, bgr_frame, depth_image, save_annot=True, show=True):
+    part = PARTS[part_key]
+    g    = GRIPPERS[part["gripper"]]
+    print("\n" + "═" * 78)
+    print(f" SAM3 DETECT — part: {part['name']!r}  prompt: {part['prompt']!r}")
+    print(f" gripper: {part['gripper']}  px_per_mm: "
+          f"{g.get('px_per_mm') if g.get('px_per_mm') else 'N/A'}")
+    print("═" * 78)
+
+    ws_mask = build_workspace_pixel_mask(bgr_frame.shape[:2], pad_px=0)
+    if ws_mask is not None:
+        bgr_masked = bgr_frame.copy()
+        bgr_masked[ws_mask == 0] = 0
+        print("  (SAM3 input restricted to workspace polygon)")
+    else:
+        bgr_masked = bgr_frame
+        print("  (no calibration — SAM3 sees full frame)")
+
+    cv2.imwrite(CAPTURE_PATH, bgr_masked)
+    image = Image.open(CAPTURE_PATH).convert("RGB")
+
+    t0 = time.time()
+    try:
+        with torch.autocast(device_type="cuda", dtype=torch.float32):
+            state  = _sam3_processor.set_image(image)
+            output = _sam3_processor.set_text_prompt(state=state,
+                                                     prompt=part["prompt"])
+    except Exception as e:
+        print(f"  SAM3 failed: {e}")
+        return {"best": None, "candidates": [], "annotated_path": None}
+
+    masks, boxes, scores = output["masks"], output["boxes"], output["scores"]
+    if len(scores) == 0:
+        print("  No detections at all.")
+        return {"best": None, "candidates": [], "annotated_path": None}
+    print(f"  SAM3 returned {len(scores)} raw detections in {time.time()-t0:.1f}s")
+
+    bool_masks = [mask_to_bool(m) for m in masks]
+    candidates = []
+    s_units = unit_scale()
+    print(f"\n  {'#':>2}  {'score':>5}  {'area':>6}  {'asp':>4}  {'cmp':>4}  "
+          f"{'X':>7} {'Y':>7} {'Z':>7} ({COORD_UNITS})   verdict")
+    print("  " + "-" * 80)
+
+    for i in range(len(scores)):
+        bm      = bool_masks[i]
+        if latest_aruco_mask is not None:
+            overlap = np.any(bm & (latest_aruco_mask > 0))
+            if overlap:
+                print(f"  {i+1:>2}  BLOCKED (overlaps ArUco marker)")
+                candidates.append({
+                    "mask_bool": bm,
+                    "box": boxes[i],
+                    "score": float(scores[i].item()),
+                    "area": int(bm.sum()),
+                    "aspect": 0,
+                    "compact": 0,
+                    "world": None,
+                    "pick_px": (0, 0),
+                    "accepted": False,
+                    "reason": "overlaps ArUco marker",
+                    "ginfo": {"gripper": part["gripper"]},
+                })
+                continue
+        score   = float(scores[i].item())
+        area    = int(bm.sum())
+        aspect  = bbox_aspect_ratio_xyxy(boxes[i])
+        compact = compactness_score(bm)
+        cen     = mask_centroid(bm)
+
+        if cen is None:
+            continue
+        cx, cy = cen
+        world  = pixel_to_world(cx, cy, depth_image)
+
+        ok_sel, reason_sel = passes_selection(part, score, area, aspect,
+                                              compact, world)
+
+        occupied_others = np.zeros_like(bm)
+        for j, bm_j in enumerate(bool_masks):
+            if j != i:
+                occupied_others |= bm_j
+
+        if ok_sel:
+            ok_grip, reason_grip, ginfo = gripper_can_grasp(
+                part, bm, occupied_others)
+        else:
+            ok_grip, reason_grip, ginfo = False, "—", {"gripper": part["gripper"]}
+
+        accepted = ok_sel and ok_grip
+        reason   = reason_sel if not ok_sel else (
+                       reason_grip if not ok_grip else "ok")
+
+        if world is None:
+            world_str = "   ---     ---     ---  "
+        else:
+            world_str = (f"{world[0]*s_units:7.2f} "
+                         f"{world[1]*s_units:7.2f} "
+                         f"{world[2]*s_units:7.2f}")
+        verdict = "OK" if accepted else f"DROP ({reason})"
+        print(f"  {i+1:>2}  {score:>5.2f}  {area:>6}  "
+              f"{aspect:>4.2f}  {compact:>4.2f}  "
+              f"{world_str}   {verdict}")
+
+        candidates.append({
+            "mask_bool": bm, "box": boxes[i],
+            "score":   score, "area":   area,
+            "aspect":  aspect,"compact": compact,
+            "world":   world, "pick_px": (int(round(cx)), int(round(cy))),
+            "accepted": accepted, "reason": reason,
+            "ginfo":   ginfo,
+        })
+
+    accepted_idx = [k for k, c in enumerate(candidates) if c["accepted"]]
+    best_idx, best_payload = None, None
+    if not accepted_idx:
+        print("\n  No candidate passed all filters.")
+    else:
+        accepted_idx.sort(key=lambda k: candidates[k]["score"], reverse=True)
+        best_idx = accepted_idx[0]
+        c = candidates[best_idx]
+
+        yaw_info_deg = None
+
+        if part["gripper"] == "parallel":
+            ang_pix = compute_pixel_angle(part, c["mask_bool"])
+            pix_jaw_angle = ang_pix + 90.0
+            yaw_deg = pixel_yaw_to_robot_yaw(
+                c["pick_px"][0], c["pick_px"][1], pix_jaw_angle)
+            yaw_deg = ((yaw_deg + 180.0) % 360.0) - 180.0
+
+        else:
+            if part.get("compute_angle", False):
+                ang_pix_part = compute_pixel_angle(part, c["mask_bool"])
+                info_yaw = pixel_yaw_to_robot_yaw(
+                    c["pick_px"][0], c["pick_px"][1], ang_pix_part)
+                if part.get("angle_mode", "principal") == "square":
+                    info_yaw = ((info_yaw + 45.0) % 90.0) - 45.0
+                else:
+                    info_yaw = ((info_yaw + 90.0) % 180.0) - 90.0
+                yaw_deg      = info_yaw
+                yaw_info_deg = info_yaw
+            else:
+                yaw_deg = 0.0
+
+        print("\n  ── BEST PICK ──")
+        print(f"   instance #     : {best_idx+1}")
+        print(f"   score          : {c['score']:.3f}")
+        print(f"   pixel          : {c['pick_px']}")
+
+        if part["gripper"] == "parallel":
+            print(f"   yaw (robot)    : {yaw_deg:+.1f}°  (sent to Doosan)")
+        else:
+            if yaw_info_deg is not None:
+                print(f"   part angle     : {yaw_info_deg:+.1f}°  "
+                      f"(suction — sent to Doosan)")
+            else:
+                print(f"   part angle     : not computed for this part")
+            print(f"   yaw (robot)    : {yaw_deg:+.1f}°  (sent to Doosan)")
+
+        if c["world"] is None:
+            print("   ROBOT XYZ      : (no calibration)")
+            world_xyz = None
+        else:
+            world_xyz = c["world"]
+            print(f"   {fmt_xyz(world_xyz)}")
+
+        best_payload = {
+            "pixel":        c["pick_px"],
+            "world":        world_xyz,
+            "yaw_deg":      yaw_deg,
+            "yaw_info_deg": yaw_info_deg,
+            "score":        c["score"],
+            "part":         part_key,
+            "gripper":      part["gripper"],
+        }
+    annotated_path = None
+    if save_annot:
+        annotated = draw_results(image.copy(), candidates, best_idx)
+        annotated.save(DETECT_OUTPUT_PATH)
+        annotated_path = DETECT_OUTPUT_PATH
+        print(f"\n   annotated img: {DETECT_OUTPUT_PATH}")
+        ann_bgr = cv2.cvtColor(np.array(annotated), cv2.COLOR_RGB2BGR)
+        global latest_annotated_bgr
+        with _annot_lock:
+            latest_annotated_bgr = ann_bgr
+    print("═" * 78 + "\n")
+
+    return {"best": best_payload, "candidates": candidates,
+            "annotated_path": annotated_path}
+
+
+def run_sam3_detect(bgr_frame, depth_image):
+    detect_part(ACTIVE_PART, bgr_frame, depth_image,
+                save_annot=True, show=True)
+
+
+# ============================================================
+# 17a) DUMMY ROBOT
+# ============================================================
+class DummyRobot:
+    name = "dummy"
+
+    def __init__(self):
+        self.sequences = []
+        self.connected = True
+
+    def connect(self, **kw): return True
+    def wait_ready(self, **kw): return True
+    def stop(self): pass
+
+    def send_pick(self, x, y, z, yaw, gripper):
+        print(f"   [DUMMY] pick:{x:.2f},{y:.2f},{z:.2f},{yaw:.2f},{gripper}")
+
+    def send_drop_pose(self, pose_name):
+        print(f"   [DUMMY] drop_pose:{pose_name}")
+
+    def home(self):
+        print("   [DUMMY] home")
+
+    def set_tcp(self, tcp_name, timeout=30.0):
+        print(f"   [DUMMY] set_tcp:{tcp_name}")
+        return True
+
+    def run_named_sequence(self, name, timeout=600):
+        print(f"   [DUMMY] run:{name}  (simulated)")
+        time.sleep(0.5)
+        print(f"   [DUMMY] done:{name}")
+        return True
+
+    def clear_lifted(self): pass
+
+    def wait_lifted(self, timeout=30.0):
+        time.sleep(0.1)
+        return True
+
+
+# ============================================================
+# 17b) DOOSAN ROBOT (TCP via comm.Link)
+# ============================================================
+class DoosanRobot:
+    name = "doosan"
+
+    def __init__(self, host, port):
+        self.host  = host
+        self.port  = port
+        self.link  = None
+        self.connected = False
+
+        self.sequences   = []
+        self.ready       = False
+        self.last_done   = None
+        self.last_error  = None
+        self.last_started = None
+
+        self._lock         = threading.Lock()
+        self._done_event   = threading.Event()
+        self._lifted_event = threading.Event()
+        self._tcp_event    = threading.Event()
+
+    def _on_message(self, msg: str) -> None:
+        logger.info(f"[Doosan] {msg}")
+        with self._lock:
+            if msg == "doosan_ready":
+                self.ready = True
+            elif msg.startswith("sequences:"):
+                seqs = msg.split(":", 1)[1].split(",")
+                self.sequences = [s.strip() for s in seqs if s.strip()]
+                logger.info(f"Doosan sequences: {self.sequences}")
+            elif msg.startswith("started:"):
+                self.last_started = msg.split(":", 1)[1]
+            elif msg.startswith("done:set_tcp"):
+                self._tcp_event.set()
+            elif msg.startswith("done:"):
+                self.last_done = msg.split(":", 1)[1]
+                self._done_event.set()
+            elif msg.startswith("error:set_tcp"):
+                self.last_error = msg
+                self._tcp_event.set()
+            elif msg.startswith("error:"):
+                self.last_error = msg
+                self._done_event.set()
+            elif msg == "event:lifted":
+                self._lifted_event.set()
+
+    def _send(self, cmd: str) -> None:
+        if not self.connected or self.link is None:
+            logger.error(f"[Doosan] not connected — dropping cmd: {cmd}")
+            return
+        logger.info(f"  →  {cmd}")
+        self.link.send(cmd)
+
+    def connect(self, timeout: float = DOOSAN_CONNECT_TIMEOUT) -> bool:
+        self.link = Link(role="client", host=self.host, port=self.port,
+                         on_message=self._on_message)
+        self.link.start()
+        logger.info(f"Connecting to Doosan at {self.host}:{self.port} ...")
+        if not self.link.wait_until_connected(timeout=timeout):
+            logger.error("Doosan connect timeout.")
+            self.link.stop(); self.link = None
+            return False
+        self.connected = True
+        logger.info("Doosan socket connected.")
+        return True
+
+    def wait_ready(self, timeout: float = DOOSAN_READY_TIMEOUT) -> bool:
+        start = time.time()
+        while time.time() - start < timeout:
+            if self.ready:
+                time.sleep(0.5)
+                return True
+            time.sleep(0.2)
+        logger.error("Doosan never sent 'doosan_ready'.")
+        return False
+
+    def stop(self) -> None:
+        try:
+            if self.link is not None:
+                self.link.stop()
+        finally:
+            self.connected = False
+            self.link = None
+
+    def send_pick(self, x, y, z, yaw, gripper):
+        self._send(f"pick:{x:.3f},{y:.3f},{z:.3f},{yaw:.3f},{gripper}")
+
+    def send_drop_pose(self, pose_name: str):
+        self._send(f"drop_pose:{pose_name}")
+
+    def home(self):
+        self._send("home")
+
+    def set_tcp(self, tcp_name: str, timeout: float = 5.0) -> bool:
+        """Tell the Doosan to switch active TCP. Blocks until ack (short timeout)."""
+        self._tcp_event.clear()
+        with self._lock:
+            self.last_error = None
+        self._send(f"set_tcp:{tcp_name}")
+        if not self._tcp_event.wait(timeout=timeout):
+            logger.error(f"  Timed out waiting for done:set_tcp ({tcp_name})")
+            return False
+        with self._lock:
+            if self.last_error and "set_tcp" in self.last_error:
+                logger.error(f"  Doosan error: {self.last_error}")
+                return False
+        logger.info(f"  ✔ done:set_tcp ({tcp_name})")
+        return True
+
+    def run_named_sequence(self, name, timeout=DOOSAN_SEQUENCE_TIMEOUT) -> bool:
+        with self._lock:
+            self.last_done  = None
+            self.last_error = None
+        self._done_event.clear()
+        self._send(f"run:{name}")
+
+        start = time.time()
+        while time.time() - start < timeout:
+            if self._done_event.wait(timeout=1.0):
+                self._done_event.clear()
+                with self._lock:
+                    if self.last_done == name:
+                        logger.info(f"  ✔ done:{name}")
+                        return True
+                    if self.last_done is not None:
+                        logger.warning(
+                            f"  got done:{self.last_done} (expected {name})")
+                        return False
+                    if self.last_error is not None:
+                        logger.error(f"  Doosan error: {self.last_error}")
+                        return False
+        logger.error(f"  Timed out waiting for done:{name}")
+        return False
+
+    def clear_lifted(self):
+        self._lifted_event.clear()
+
+    def wait_lifted(self, timeout: float = DOOSAN_LIFTED_TIMEOUT) -> bool:
+        return self._lifted_event.wait(timeout=timeout)
+
+
+# ============================================================
+# 17c) Global ROBOT handle
+# ============================================================
+ROBOT = DummyRobot()
+
+
+# ============================================================
+# 17d) Gripper switching (layout + TCP)
+# ============================================================
+def switch_gripper(gname: str) -> bool:
+    """
+    Reload marker layout (centres + orientations) and calibration for the
+    requested gripper, and tell the Doosan to switch its active TCP.
+    """
+    if gname == ACTIVE_GRIPPER:
+        return True
+    if gname not in MARKER_CENTRES_BY_GRIPPER:
+        logger.error(f"switch_gripper: unknown gripper {gname!r}")
+        return False
+
+    logger.info(f"\n▒▒▒ switching gripper: {ACTIVE_GRIPPER!r} → {gname!r} ▒▒▒")
+
+    _apply_gripper_layout(gname)
+    _sanity_check_layout()
+
+    H_l, H_inv_l = load_calibration()
+    if H_l is not None:
+        global H_pix2robot_locked, H_robot2pix_locked, calibration_locked
+        H_pix2robot_locked = H_l
+        H_robot2pix_locked = H_inv_l
+        calibration_locked = True
+    else:
+        logger.warning(f"No calibration for gripper {gname!r} — "
+                       f"recalibrate and press S.")
+
+    tcp_name = GRIPPER_TO_TCP.get(gname)
+    if tcp_name is None:
+        logger.error(f"No Doosan TCP mapped for gripper {gname!r}")
+        return False
+    if not ROBOT.set_tcp(tcp_name):
+        logger.error(f"Doosan refused TCP switch to {tcp_name!r}")
+        return False
+    return True
+
+
+# ============================================================
+# 17e) GRID RUNNER
+# ============================================================
+def run_grid_poses(corners=None, NX=None, NY=None,
+                   save_path=None, drive_robot=None):
+    corners     = corners     if corners     is not None else GRID_CORNERS
+    NX          = NX          if NX          is not None else GRID_NX
+    NY          = NY          if NY          is not None else GRID_NY
+    save_path   = save_path   if save_path   is not None else GRID_POSES_FILE
+    drive_robot = drive_robot if drive_robot is not None else RUN_GRID_ON_M
+
+    print("\n" + "█" * 78)
+    print(f" GRID-POSE GENERATOR  ({NX}×{NY} = {NX*NY} poses)  "
+          f"gripper={ACTIVE_GRIPPER}")
+    for name, p in zip(["P00(TL,id1)", "P10(TR,id0)",
+                        "P01(BL,id5)", "P11(BR,id2)"], corners):
+        print(f"   {name}: posx({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f}, "
+              f"{p[3]:.2f}, {p[4]:.2f}, {p[5]:.2f})")
+    print("█" * 78)
+
+    poses = generate_grid_poses(corners, NX, NY, verbose=True)
+    payload = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "gripper":   ACTIVE_GRIPPER,
+        "NX": NX, "NY": NY,
+        "corners": corners, "poses": poses,
+        "format": "X_mm, Y_mm, Z_mm, Rx_deg, Ry_deg, Rz_deg  (Doosan ZYZ)",
+    }
+    with open(save_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"\n  Saved -> {save_path}")
+    print("█" * 78 + "\n")
+    return poses
+
+
+# ============================================================
+# 18) WORLD ↔ ROBOT
+# ============================================================
+def world_to_robot(world_xyz_m, world_yaw_deg=0.0):
+    p_robot = np.asarray(world_xyz_m, dtype=np.float64) * 1000.0
+    return p_robot, world_yaw_deg
+
+
+# ============================================================
+# 19) CAMERA + OPERATOR HELPERS
+# ============================================================
+def grab_fresh_frame(flush=FRAME_FLUSH_COUNT):
+    global latest_color_image, latest_depth_image, latest_aruco_mask
+
+    last_color = last_depth = None
+    for _ in range(max(1, flush)):
+        frames = pipeline.wait_for_frames()
+        aligned = align.process(frames)
+        cf = aligned.get_color_frame()
+        df = aligned.get_depth_frame()
+        if not cf or not df:
+            continue
+
+        df = spatial.process(df)
+        df = temporal.process(df)
+        df = hole_filling.process(df)
+
+        last_depth = np.asanyarray(df.as_depth_frame().get_data())
+        last_color = np.asanyarray(cf.get_data())
+
+    if last_color is not None:
+        latest_color_image = last_color
+        latest_depth_image = last_depth
+
+        corners, ids, _ = detector.detectMarkers(last_color)
+        update_px_per_mm_from_aruco(corners, ids)
+
+        h, w = last_color.shape[:2]
+        aruco_mask = np.zeros((h, w), dtype=np.uint8)
+
+        if ids is not None:
+            for c in corners:
+                pts = c.reshape(4, 2).astype(np.int32)
+                cv2.fillConvexPoly(aruco_mask, pts, 255)
+
+        aruco_mask = cv2.dilate(aruco_mask, np.ones((25, 25), np.uint8))
+        latest_aruco_mask = aruco_mask
+
+    return last_color, last_depth
+
+
+def operator_prompt(msg, allowed=("placed",)):
+    """
+    Ask the operator a question. The prompt is sent to main_control over the
+    control link; the operator types the answer in main_control's terminal.
+    Falls back to local input() if no control client is connected.
+
+    Returns one of the allowed words, or "skip" / "abort".
+    """
+    extras = ("skip", "abort")
+    allowed_all = tuple(list(allowed) + list(extras))
+
+    # If no main_control is connected, fall back to local stdin.
+    use_remote = False
+    try:
+        use_remote = bool(_ctrl_link) and _ctrl_link.is_connected()
+    except Exception:
+        use_remote = False
+
+    if not use_remote:
+        while True:
+            try:
+                ans = input(f"   >>> {msg}: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return "abort"
+            if ans in allowed_all:
+                return ans
+            print(f"       (type one of: {', '.join(allowed_all)})")
+
+    # --- Remote prompt path ---
+    pid = next(_prompt_id_counter)
+    entry = {"event": threading.Event(),
+             "answer": None,
+             "allowed": allowed_all}
+    with _pending_lock:
+        _pending_prompts[pid] = entry
+
+    # Single-line wire format, easy to parse on the main_control side:
+    #     Prompt: <id> | <allowed_csv> | <message>
+    allowed_csv = ",".join(allowed_all)
+    wire = f"Prompt: {pid} | {allowed_csv} | {msg}"
+    try:
+        _ctrl_link.send(wire)
+        logger.info(f"[CTRL] prompt {pid} sent, waiting for reply: {msg!r}")
+    except Exception as e:
+        logger.warning(f"[CTRL] could not send prompt ({e}); using local input")
+        with _pending_lock:
+            _pending_prompts.pop(pid, None)
+        try:
+            ans = input(f"   >>> {msg}: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "abort"
+        return ans if ans in allowed_all else "abort"
+
+    # Wait forever — operator may walk over to the box first.
+    # Periodically check that the link is still up; if not, fall back.
+    while True:
+        if entry["event"].wait(timeout=2.0):
+            break
+        try:
+            still_up = _ctrl_link.is_connected()
+        except Exception:
+            still_up = False
+        if not still_up:
+            logger.warning(f"[CTRL] link dropped while waiting for prompt "
+                           f"{pid}; falling back to local input")
+            with _pending_lock:
+                _pending_prompts.pop(pid, None)
+            try:
+                ans = input(f"   >>> {msg}: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return "abort"
+            return ans if ans in allowed_all else "abort"
+
+    with _pending_lock:
+        _pending_prompts.pop(pid, None)
+    answer = entry["answer"] or "abort"
+    logger.info(f"[CTRL] prompt {pid} answered: {answer!r}")
+    return answer
+
+
+# ============================================================
+# 20) SEQUENCE RUNNER (per-step gripper switching included)
+# ============================================================
+_DETECT_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+
+
+def _detect_job(part_key):
+    color, depth = grab_fresh_frame()
+    if color is None:
+        return None, None, None
+    result = detect_part(part_key, color, depth,
+                         save_annot=True, show=False)
+    return result["best"], color, depth
+
+
+def run_sequence(path=SEQUENCE_FILE):
+    if not os.path.exists(path):
+        print(f"[ERR] sequence file not found: {path}")
+        return
+    with open(path, "r") as f:
+        items = json.load(f)
+    if not isinstance(items, list) or not items:
+        print(f"[ERR] sequence file empty or wrong format: {path}")
+        return
+
+    print("\n" + "█" * 78)
+    print(f" RUNNING SEQUENCE: {path}  ({len(items)} item(s))")
+    print(f" Robot backend:    {ROBOT.name}")
+    print(f" Active gripper:   {ACTIVE_GRIPPER}")
+    if getattr(ROBOT, "sequences", None):
+        print(f" Doosan sequences: {ROBOT.sequences}")
+    print("█" * 78)
+
+    for step_idx, item in enumerate(items, 1):
+        tray       = item.get("tray", f"#{step_idx}")
+        part_key   = item.get("part")
+        drop_pose  = item.get("drop_pose")
+        retries    = int(item.get("retries", 3))
+        count      = int(item.get("count",   1))
+        doosan_seq = item.get("doosan_sequence", DEFAULT_DOOSAN_SEQUENCE)
+
+        print("\n" + "─" * 78)
+        print(f" STEP {step_idx}/{len(items)}  tray={tray}  part={part_key}  "
+              f"drop_pose={drop_pose}  count={count}  retries={retries}  "
+              f"doosan_seq={doosan_seq}")
+        print("─" * 78)
+
+        if part_key not in PARTS:
+            print(f"  [ERR] unknown part '{part_key}' — skipping.")
+            continue
+        if not drop_pose:
+            print(f"  [ERR] step has no 'drop_pose' — skipping.")
+            continue
+
+        # ── Gripper switch for this part if needed ──
+        wanted_gripper = PARTS[part_key]["gripper"]
+        if wanted_gripper != ACTIVE_GRIPPER:
+            print(f"   part {part_key!r} needs gripper={wanted_gripper!r}; "
+                  f"switching from {ACTIVE_GRIPPER!r}…")
+            if not switch_gripper(wanted_gripper):
+                print(f"   [ERR] gripper switch failed — skipping step.")
+                continue
+                # Override per-step doosan_sequence with the gripper-specific one
+        gripper_seq = SEQUENCE_BY_GRIPPER.get(ACTIVE_GRIPPER)
+        if gripper_seq:
+            if doosan_seq != gripper_seq:
+                print(f"   doosan_sequence override: "
+                      f"{doosan_seq!r} → {gripper_seq!r} "
+                      f"(gripper={ACTIVE_GRIPPER})")
+            doosan_seq = gripper_seq
+        if (ROBOT.name == "doosan" and ROBOT.sequences
+                and doosan_seq not in ROBOT.sequences):
+            print(f"   ⚠ Doosan does not list '{doosan_seq}' — "
+                  f"sending anyway.")
+
+        print(f"   put tray {tray} on the plate")
+        ans = operator_prompt("type 'placed' when ready (or 'skip'/'abort')")
+        if ans == "abort":
+            print("   ABORT — leaving sequence.")
+            return
+        if ans == "skip":
+            print(f"   skipping tray {tray}.")
+            continue
+
+        prefetched_future = None
+
+        for pick_idx in range(1, count + 1):
+            print(f"\n   ── PICK {pick_idx}/{count}  "
+                  f"(tray {tray}, part {part_key}) ──")
+
+            best = None
+            if prefetched_future is not None:
+                print("   (using prefetched SAM3 result from background)")
+                try:
+                    best, _c, _d = prefetched_future.result(timeout=60.0)
+                except Exception as e:
+                    print(f"   prefetch failed: {e}")
+                    best = None
+                prefetched_future = None
+
+            attempt = 0
+            while (best is None or best.get("world") is None) \
+                    and attempt < retries:
+                attempt += 1
+                print(f"   detection attempt {attempt}/{retries}")
+                best, _c, _d = _detect_job(part_key)
+                if best is not None and best.get("world") is not None:
+                    break
+
+                remaining = retries - attempt
+                print(f"\n   ⚠️  Could not find a usable '{part_key}'.")
+                if remaining <= 0:
+                    print("      No retries left.")
+                    break
+                print( "      Please SHAKE the plate so parts reposition.")
+                print(f"      ({remaining} retry/retries left)")
+                ans = operator_prompt(
+                    "type 'shaken' when done (or 'skip'/'abort')",
+                    allowed=("shaken",))
+                if ans == "abort":
+                    print("   ABORT — leaving sequence.")
+                    return
+                if ans == "skip":
+                    print("   skipping this pick.")
+                    best = None
+                    break
+
+            if best is None or best.get("world") is None:
+                print(f"   ✗ giving up on pick {pick_idx}/{count} "
+                      f"for tray {tray}.")
+                break
+
+            p_robot, robot_yaw = world_to_robot(best["world"], best["yaw_deg"])
+            xr, yr, zr = p_robot
+
+            pickup_z = PARTS[part_key].get("pickup_height_mm")
+            zr_cam = zr
+            if pickup_z is not None:
+                zr = float(pickup_z)
+                print(f"   pickup_height override: "
+                      f"camera Z={zr_cam:7.2f} mm  →  "
+                      f"part Z={zr:7.2f} mm "
+                      f"(part='{part_key}')")
+            else:
+                print(f"   pickup_height: using camera Z={zr:7.2f} mm "
+                      f"(no override for part '{part_key}')")
+
+            if best["gripper"] == "suction":
+                info_ang = best.get("yaw_info_deg")
+                if info_ang is not None:
+                    print(f"   suction part angle: {info_ang:+.2f}°  "
+                          f"(sent to Doosan for drop rotation)")
+
+            print(f"   BEST XYZ (robot mm): "
+                  f"X={xr:7.2f}  Y={yr:7.2f}  Z={zr:7.2f}  "
+                  f"yaw={robot_yaw:+.1f}°  gripper={best['gripper']}")
+
+            ROBOT.clear_lifted()
+            ROBOT.send_pick(xr, yr, zr, robot_yaw, best["gripper"])
+            ROBOT.send_drop_pose(drop_pose)
+
+            if hasattr(ROBOT, "_done_event"):
+                with ROBOT._lock:
+                    ROBOT.last_done  = None
+                    ROBOT.last_error = None
+                ROBOT._done_event.clear()
+                ROBOT._lifted_event.clear()      # belt-and-braces, in case it lingered
+                ROBOT._send(f"run:{doosan_seq}")
+            else:
+                ROBOT.run_named_sequence(doosan_seq, timeout=DOOSAN_SEQUENCE_TIMEOUT)
+
+            more_picks_in_step = (pick_idx < count)
+            if more_picks_in_step and ROBOT.name == "doosan":
+                print("   waiting for 'event:lifted' from Doosan ...")
+                lifted = ROBOT.wait_lifted(timeout=DOOSAN_LIFTED_TIMEOUT)
+                if lifted:
+                    print("   ✓ robot lifted — starting next SAM3 "
+                          "detection in background")
+                    prefetched_future = _DETECT_EXECUTOR.submit(
+                        _detect_job, part_key)
+                else:
+                    print(f"   ⚠ never received 'event:lifted' within "
+                          f"{DOOSAN_LIFTED_TIMEOUT}s — will detect after place")
+
+            if ROBOT.name == "doosan":
+                ok = False
+                start = time.time()
+                while time.time() - start < DOOSAN_SEQUENCE_TIMEOUT:
+                    if ROBOT._done_event.wait(timeout=1.0):
+                        ROBOT._done_event.clear()
+                        with ROBOT._lock:
+                            if ROBOT.last_done == doosan_seq:
+                                ok = True
+                                logger.info(f"  ✔ done:{doosan_seq}")
+                                break
+                            if ROBOT.last_done is not None:
+                                logger.warning(
+                                    f"  got done:{ROBOT.last_done} "
+                                    f"(expected {doosan_seq})")
+                                break
+                            if ROBOT.last_error is not None:
+                                logger.error(
+                                    f"  Doosan error: {ROBOT.last_error}")
+                                break
+                if not ok:
+                    print(f"   ✗ Doosan sequence '{doosan_seq}' "
+                          f"failed/timed out.")
+                    ans = operator_prompt(
+                        "type 'continue' to keep going, or 'abort'/'skip'",
+                        allowed=("continue",))
+                    if ans == "abort":
+                        return
+                    if ans == "skip":
+                        break
+                else:
+                    print(f"   ✓ pick {pick_idx}/{count} complete on Doosan.")
+            else:
+                print(f"   ✓ pick {pick_idx}/{count} complete (dummy).")
+
+            time.sleep(POST_PICK_SETTLE_S)
+
+    try:
+        ROBOT.home()
+    except Exception:
+        pass
+
+    print("\n" + "█" * 78)
+    print(" SEQUENCE COMPLETE")
+    print("█" * 78 + "\n")
+
+
+# ============================================================
+# 21) MOUSE
+# ============================================================
+def mouse_callback(event, x, y, flags, param):
+    global clicked_points
+    if event == cv2.EVENT_LBUTTONDOWN:
+        H, _ = get_active_H()
+        if H is None:
+            print("No calibration yet.")
+            return
+        xyz = pixel_to_world(x, y, latest_depth_image)
+        if xyz is None:
+            return
+        ws = "" if in_workspace(xyz) else "  [outside workspace]"
+        print(f"\n>>> Pixel ({x:4d},{y:4d})  ROBOT  {fmt_xyz(xyz)}{ws}")
+        s = unit_scale()
+        print(f"    move to: x={xyz[0]*s:.2f} y={xyz[1]*s:.2f} "
+              f"z={xyz[2]*s:.2f} ({COORD_UNITS})")
+        clicked_points.append(((x, y), xyz))
+        if len(clicked_points) > 10:
+            clicked_points.pop(0)
+    elif event == cv2.EVENT_RBUTTONDOWN:
+        clicked_points = []
+
+
+cv2.namedWindow("World Calibration", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("World Calibration", COLOR_W, COLOR_H)
+cv2.setMouseCallback("World Calibration", mouse_callback)
+cv2.namedWindow("SAM3 Detections", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("SAM3 Detections", 1280, 720)
+
+
+# ============================================================
+# 22) STARTUP
+# ============================================================
+S_BIG, S_MED, S_SMALL = 0.55 * UI_SCALE, 0.50 * UI_SCALE, 0.42 * UI_SCALE
+T_BOLD = max(1, int(round(2 * UI_SCALE * 0.7)))
+T_THIN = max(1, int(round(UI_SCALE * 0.7)))
+LINE_H, LINE_HS = int(round(22 * UI_SCALE)), int(round(15 * UI_SCALE))
+
+_sanity_check_layout()
+
+print(f"Marker CENTRES + ORIENTATIONS (in robot frame, "
+      f"gripper={ACTIVE_GRIPPER}):")
+for mid, c in MARKER_CENTRES.items():
+    rx, ry, rz = MARKER_ORIENTATIONS_ZYZ_DEG[mid]
+    print(f"  id {mid}: {fmt_xyz(c)}   Rx={rx:7.2f} Ry={ry:6.2f} Rz={rz:7.2f}")
+
+print(f"\nActive part: {PARTS[ACTIVE_PART]['name']}")
+print("Keys: L-click | SPACE=lock | C=clear | S=save | D=load | V=verify")
+print("      G=grid | U=units | T=mode | X=SAM3 detect | 1..9=part")
+print("      P=run sequence | M=grid-poses | H=cycle gripper | ESC=quit")
+for i, k in enumerate(PART_KEYS[:9]):
+    print(f"    {i+1}: {PARTS[k]['name']} "
+          f"(prompt={PARTS[k]['prompt']!r}, gripper={PARTS[k]['gripper']})")
+
+_H_loaded, _H_inv_loaded = load_calibration()
+if _H_loaded is not None:
+    H_pix2robot_locked = _H_loaded
+    H_robot2pix_locked = _H_inv_loaded
+    calibration_locked = True
+
+if USE_DOOSAN:
+    print("\n" + "▒" * 78)
+    print(f"  Connecting to Doosan at {DOOSAN_HOST}:{DOOSAN_PORT} ...")
+    print("▒" * 78)
+    doosan = DoosanRobot(DOOSAN_HOST, DOOSAN_PORT)
+    if doosan.connect(timeout=DOOSAN_CONNECT_TIMEOUT):
+        if doosan.wait_ready(timeout=DOOSAN_READY_TIMEOUT):
+            ROBOT = doosan
+            print(f"  Doosan link READY. Backend = {ROBOT.name}")
+            if doosan.sequences:
+                print(f"  Doosan sequences: {doosan.sequences}")
+            # Make sure the Doosan's active TCP matches our active gripper.
+            initial_tcp = GRIPPER_TO_TCP.get(ACTIVE_GRIPPER)
+            if initial_tcp:
+                print(f"  Setting initial Doosan TCP -> {initial_tcp}")
+                doosan.set_tcp(initial_tcp)
+        else:
+            print("  Doosan never sent 'doosan_ready' — using DummyRobot.")
+            doosan.stop()
+    else:
+        print("  Could not connect — using DummyRobot.")
+else:
+    print("\n  USE_DOOSAN=False — using DummyRobot.")
+
+
+# ============================================================
+# 23) MAIN LOOP
+# ============================================================
+_GRIPPER_CYCLE = list(MARKER_CENTRES_BY_GRIPPER.keys())
+
+try:
+    while True:
+        frames  = pipeline.wait_for_frames()
+        aligned = align.process(frames)
+        color_frame = aligned.get_color_frame()
+        depth_frame = aligned.get_depth_frame()
+        if not color_frame or not depth_frame:
+            continue
+
+        df = spatial.process(depth_frame)
+        df = temporal.process(df)
+        df = hole_filling.process(df)
+
+        latest_depth_image = np.asanyarray(df.as_depth_frame().get_data())
+        latest_color_image = np.asanyarray(color_frame.get_data())
+        img = latest_color_image.copy()
+
+        corners, ids, _ = detector.detectMarkers(img)
+        update_px_per_mm_from_aruco(corners, ids)
+
+        if ids is not None:
+            cv2.aruco.drawDetectedMarkers(img, corners, ids)
+            for mid_arr, m_corner in zip(ids.flatten(), corners):
+                mid = int(mid_arr)
+                if mid in WORLD_MARKERS:
+                    pts = m_corner.reshape(4, 2).astype(np.float64)
+                    marker_corner_history[mid].append(pts)
+
+        seed_pix, seed_robot, used_ids = [], [], []
+        for mid in WORLD_MARKERS:
+            if len(marker_corner_history[mid]) >= 3:
+                avg = np.median(np.stack(marker_corner_history[mid]), axis=0)
+                centre_pix = avg.mean(axis=0)
+                seed_pix.append(centre_pix)
+                seed_robot.append(WORLD_MARKERS[mid][:2])
+                used_ids.append(mid)
+
+        live_H = live_H_inv = mean_err = per_err = None
+        if len(used_ids) >= 4:
+            H_seed, Hi_seed, e_seed, pe_seed = fit_homography(
+                seed_pix, seed_robot)
+            if not USE_CORNERS:
+                live_H, live_H_inv = H_seed, Hi_seed
+                mean_err, per_err  = e_seed, pe_seed
+            else:
+                pix_pts, robot_pts = [], []
+                for mid in used_ids:
+                    avg = np.median(np.stack(marker_corner_history[mid]),
+                                    axis=0)
+                    avg_img = reorder_corners_to_image_frame(
+                        avg, avg.mean(axis=0), Hi_seed, mid)
+                    for k in range(4):
+                        pix_pts.append(avg_img[k])
+                        robot_pts.append(WORLD_CORNERS_IMG[mid][k, :2])
+                live_H, live_H_inv, mean_err, per_err = fit_homography(
+                    pix_pts, robot_pts)
+
+            if live_H is not None:
+                last_reproj_err_px = mean_err
+                if not calibration_locked:
+                    H_pix2robot = live_H
+                    H_robot2pix = live_H_inv
+
+        H_active, H_active_inv = get_active_H()
+        if H_active_inv is not None:
+            ws_robot = np.array([
+                [WORKSPACE_X_MIN, WORKSPACE_Y_MIN],
+                [WORKSPACE_X_MAX, WORKSPACE_Y_MIN],
+                [WORKSPACE_X_MAX, WORKSPACE_Y_MAX],
+                [WORKSPACE_X_MIN, WORKSPACE_Y_MAX],
+            ], dtype=np.float64)
+            ws_img = apply_H(H_active_inv, ws_robot)
+            cv2.polylines(img, [ws_img.astype(np.int32)],
+                          isClosed=True, color=(255, 0, 255),
+                          thickness=T_THIN, lineType=cv2.LINE_AA)
+
+            for mid, c in WORLD_MARKERS.items():
+                pc = apply_H(H_active_inv, [c[:2]])[0]
+                u, v = int(round(pc[0])), int(round(pc[1]))
+                cv2.drawMarker(img, (u, v), (0, 255, 255),
+                               cv2.MARKER_CROSS, 14, T_BOLD)
+                cv2.putText(img, f"id{mid}", (u + 8, v - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, S_SMALL,
+                            (0, 255, 255), T_THIN, cv2.LINE_AA)
+
+            if SHOW_GRID:
+                step = 0.02
+                xs = np.arange(WORKSPACE_X_MIN, WORKSPACE_X_MAX + 1e-6, step)
+                ys = np.arange(WORKSPACE_Y_MIN, WORKSPACE_Y_MAX + 1e-6, step)
+                for x in xs:
+                    seg = apply_H(H_active_inv,
+                                  [[x, WORKSPACE_Y_MIN], [x, WORKSPACE_Y_MAX]])
+                    cv2.line(img, tuple(seg[0].astype(int)),
+                             tuple(seg[1].astype(int)), (80, 200, 80), 1)
+                for y in ys:
+                    seg = apply_H(H_active_inv,
+                                  [[WORKSPACE_X_MIN, y], [WORKSPACE_X_MAX, y]])
+                    cv2.line(img, tuple(seg[0].astype(int)),
+                             tuple(seg[1].astype(int)), (80, 200, 80), 1)
+
+        for (px, py), xyz in clicked_points:
+            in_ws = in_workspace(xyz)
+            col_dot = (0, 0, 255) if in_ws else (0, 165, 255)
+            cv2.circle(img, (px, py), int(6 * UI_SCALE), col_dot, -1)
+            cv2.putText(img, fmt_xyz(xyz, compact=True),
+                        (px + 10, py - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, S_MED,
+                        col_dot, T_THIN, cv2.LINE_AA)
+
+        y0 = int(28 * UI_SCALE)
+        p_name = PARTS[ACTIVE_PART]["name"]
+        p_grip = PARTS[ACTIVE_PART]["gripper"]
+        mode_str = "CORNERS(16pt)" if USE_CORNERS else "CENTRES(4pt)"
+        backend_str = f"Robot={ROBOT.name}"
+        if ROBOT.name == "doosan" and getattr(ROBOT, "ready", False):
+            backend_str += " READY"
+        cv2.putText(img,
+            f"Part: {p_name}  [grip={p_grip}]  layout={ACTIVE_GRIPPER}  |  "
+            f"Homography {mode_str}  units={COORD_UNITS}  "
+            f"markers: {len(used_ids)}/4  |  {backend_str}",
+            (10, y0), cv2.FONT_HERSHEY_SIMPLEX, S_BIG,
+            (0, 255, 255), T_BOLD, cv2.LINE_AA)
+        y0 += LINE_H
+
+        if current_px_per_mm is not None:
+            cv2.putText(img, f"scale: {current_px_per_mm:.2f} px/mm",
+                        (10, y0), cv2.FONT_HERSHEY_SIMPLEX, S_SMALL,
+                        (200, 200, 200), T_THIN, cv2.LINE_AA)
+            y0 += LINE_HS
+
+        if last_reproj_err_px is not None:
+            col = (0, 255, 0) if last_reproj_err_px < MAX_REPROJ_PX else (0, 165, 255)
+            lock_label = "[LOCKED]" if calibration_locked else "[live]"
+            cv2.putText(img,
+                f"reproj err: {last_reproj_err_px:5.2f} px  {lock_label}",
+                (10, y0), cv2.FONT_HERSHEY_SIMPLEX, S_MED,
+                (255, 0, 255) if calibration_locked else col,
+                T_THIN, cv2.LINE_AA)
+            y0 += LINE_HS
+
+        cv2.putText(img,
+            "L=click  SPACE=lock  S=save  D=load  V=verify  G=grid  "
+            "U=units  T=mode  X=detect  1..9=part  P=seq  M=grid-poses  "
+            "H=gripper  ESC=quit",
+            (10, COLOR_H - int(12 * UI_SCALE)),
+            cv2.FONT_HERSHEY_SIMPLEX, S_SMALL,
+            (200, 200, 200), T_THIN, cv2.LINE_AA)
+
+        if sequence_running:
+            cv2.putText(img, "SEQUENCE RUNNING (camera live)",
+                        (10, COLOR_H - int(34 * UI_SCALE)),
+                        cv2.FONT_HERSHEY_SIMPLEX, S_MED,
+                        (0, 200, 255), T_BOLD, cv2.LINE_AA)
+
+        cv2.imshow("World Calibration", img)
+        with _annot_lock:
+            annot = latest_annotated_bgr
+        if annot is not None:
+            cv2.imshow("SAM3 Detections", annot)
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == 27:
+            break
+
+        elif key == 32:
+            if calibration_locked:
+                calibration_locked = False
+                H_pix2robot_locked = None
+                H_robot2pix_locked = None
+                print("UNLOCKED")
+            elif H_pix2robot is not None:
+                H_pix2robot_locked = H_pix2robot.copy()
+                H_robot2pix_locked = H_robot2pix.copy()
+                calibration_locked = True
+                print(f"LOCKED (reproj={last_reproj_err_px:.2f} px)")
+            else:
+                print("Cannot lock — no homography yet.")
+
+        elif key in (ord('c'), ord('C')):
+            for mid in marker_corner_history:
+                marker_corner_history[mid].clear()
+            print("Marker history cleared.")
+
+        elif key in (ord('s'), ord('S')):
+            H_to_save = H_pix2robot_locked if calibration_locked else H_pix2robot
+            if H_to_save is not None:
+                save_calibration(H_to_save, last_reproj_err_px)
+
+        elif key in (ord('d'), ord('D')):
+            H_l, H_inv_l = load_calibration()
+            if H_l is not None:
+                H_pix2robot_locked = H_l
+                H_robot2pix_locked = H_inv_l
+                calibration_locked = True
+
+        elif key in (ord('t'), ord('T')):
+            USE_CORNERS = not USE_CORNERS
+            print(f"Mode -> "
+                  f"{'CORNERS (16pt)' if USE_CORNERS else 'CENTRES (4pt)'}")
+
+        elif key in (ord('v'), ord('V')):
+            H_a, _ = get_active_H()
+            if H_a is None:
+                print("No calibration.")
+            else:
+                print("\n── VERIFY ──")
+                s = unit_scale()
+                worst = (None, 0.0)
+                for mid in sorted(WORLD_MARKERS):
+                    if len(marker_corner_history[mid]) < 3:
+                        print(f"  id {mid}: not enough samples")
+                        continue
+                    avg = np.median(np.stack(marker_corner_history[mid]), axis=0)
+                    centre_pix = avg.mean(axis=0)
+                    meas_c = apply_H(H_a, [centre_pix])[0]
+                    exp_c  = WORLD_MARKERS[mid][:2]
+                    e_mm = np.linalg.norm(meas_c - exp_c) * 1000.0
+                    print(f"  id {mid}: err={e_mm:5.2f} mm")
+                    if e_mm > worst[1]:
+                        worst = (mid, e_mm)
+                if worst[0] is not None:
+                    print(f"  ► WORST: id {worst[0]} = {worst[1]:.2f} mm")
+
+        elif key in (ord('g'), ord('G')):
+            SHOW_GRID = not SHOW_GRID
+
+        elif key in (ord('u'), ord('U')):
+            order = ["mm", "cm", "m"]
+            COORD_UNITS = order[(order.index(COORD_UNITS) + 1) % len(order)]
+            print(f"Units -> {COORD_UNITS}")
+
+        elif key in (ord('x'), ord('X')):
+            if latest_color_image is not None:
+                run_sam3_detect(latest_color_image.copy(),
+                                latest_depth_image)
+
+        elif key in (ord('h'), ord('H')):
+            if sequence_running:
+                print("Sequence running — refusing manual gripper switch.")
+            else:
+                idx = _GRIPPER_CYCLE.index(ACTIVE_GRIPPER)
+                nxt = _GRIPPER_CYCLE[(idx + 1) % len(_GRIPPER_CYCLE)]
+                print(f"Manual gripper switch -> {nxt} (in background)")
+
+                def _switch_worker(target=nxt):
+                    try:
+                        switch_gripper(target)
+                    except Exception as e:
+                        logger.exception(f"switch_gripper crashed: {e}")
+                    finally:
+                        print(f"Gripper switch thread finished (now: {ACTIVE_GRIPPER}).")
+
+                threading.Thread(target=_switch_worker,
+                                name="gripper-switch", daemon=True).start()
+
+        elif key in (ord('p'), ord('P')):
+            if sequence_running:
+                print("Sequence already running — ignoring P.")
+            else:
+                def _seq_worker():
+                    global sequence_running
+                    sequence_running = True
+                    try:
+                        run_sequence(SEQUENCE_FILE)
+                    except Exception as e:
+                        logger.exception(f"Sequence crashed: {e}")
+                    finally:
+                        sequence_running = False
+                        print("Sequence thread finished.")
+                sequence_thread = threading.Thread(
+                    target=_seq_worker, name="sequence", daemon=True)
+                sequence_thread.start()
+                print("Sequence started in background — main camera stays live.")
+
+        elif key in (ord('m'), ord('M')):
+            run_grid_poses()
+
+        elif ord('1') <= key <= ord('9'):
+            idx = key - ord('1')
+            if idx < len(PART_KEYS):
+                ACTIVE_PART = PART_KEYS[idx]
+                print(f"Active part -> {PARTS[ACTIVE_PART]['name']}")
+
+finally:
+    pipeline.stop()
+    cv2.destroyAllWindows()
+    try:
+        ROBOT.stop()
+    except Exception:
+        pass

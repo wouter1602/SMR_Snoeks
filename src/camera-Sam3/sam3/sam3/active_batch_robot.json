@@ -1,0 +1,26 @@
+{
+  "status": "started",
+  "startedAt": "2026-06-09T10:19:09",
+  "batch": {
+    "id": "0F1F4DE2",
+    "name": "P000036155 - P000036155 - Inst. Set Caddy 5 Flex L1",
+    "created": "02-06-2026",
+    "batchSize": 5,
+    "partCount": 22,
+    "totalQty": 8000
+  },
+  "robotarmDeliveries": [
+    {
+      "buffer": "A3",
+      "partId": 9,
+      "article": "831009",
+      "deliverQuantity": 200
+    },
+    {
+      "buffer": "B2",
+      "partId": 17,
+      "article": "P000038404",
+      "deliverQuantity": 200
+    }
+  ]
+}

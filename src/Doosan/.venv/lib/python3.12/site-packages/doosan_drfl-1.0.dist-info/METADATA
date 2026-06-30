@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: doosan_drfl
+Version: 1.0
+Summary: Python bindings for the Doosan Robot Framework Library (DRFL)
+Requires-Python: >=3.9
+License-File: LICENSE
+Provides-Extra: dev
+Requires-Dist: pybind11-stubgen; extra == "dev"
+Dynamic: license-file

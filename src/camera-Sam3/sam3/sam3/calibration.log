@@ -1,0 +1,11 @@
+2026-06-04 10:57:44,826  INFO      ============================================================
+2026-06-04 10:57:44,826  INFO        RealSense D435 — ChArUco Auto-Calibration
+2026-06-04 10:57:44,826  INFO      ============================================================
+2026-06-04 10:57:44,826  INFO      OpenCV  4.13.0
+2026-06-04 10:57:44,826  INFO      Board   7×5  sq=40mm  mk=30mm  DICT_6X6_250
+2026-06-04 10:57:44,845  INFO      Board image saved → charuco_board.png  (print at the sizes set in SETTINGS)
+2026-06-04 10:57:45,155  INFO      Camera warming up (30 frames) …
+2026-06-04 10:58:34,302  INFO      Stream started  1280×720 @ 30 fps
+2026-06-04 10:58:34,328  INFO      Factory fx=918.96  fy=918.37  cx=657.27  cy=359.04
+2026-06-04 10:58:34,328  INFO      Collecting 40 good frames …  (interval 0.6 s)
+2026-06-04 10:58:34,329  INFO      Move / tilt / rotate the board to cover the full FOV.
